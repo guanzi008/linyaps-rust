@@ -96,14 +96,23 @@ if [[ -n ${LINYAPS_E2E_ROOTFS:-} ]]; then
     fi
     cp -a -- "$LINYAPS_E2E_ROOTFS/." "$rootfs/"
 else
-    for executable in /bin/bash /sbin/ldconfig; do
-        if [[ ! -x $executable ]]; then
-            printf 'required host executable is missing: %s\n' "$executable" >&2
-            exit 1
-        fi
-        copy_file "$executable" "$executable"
-        copy_dependencies "$(readlink -f -- "$executable")"
-    done
+    if [[ ! -x /bin/bash ]]; then
+        printf 'required host executable is missing: /bin/bash\n' >&2
+        exit 1
+    fi
+    copy_file /bin/bash /bin/bash
+    copy_dependencies "$(readlink -f -- /bin/bash)"
+
+    ldconfig=/sbin/ldconfig
+    if [[ -x /sbin/ldconfig.real ]]; then
+        ldconfig=/sbin/ldconfig.real
+    fi
+    if [[ ! -x $ldconfig ]]; then
+        printf 'required host executable is missing: %s\n' "$ldconfig" >&2
+        exit 1
+    fi
+    copy_file "$ldconfig" /sbin/ldconfig
+    copy_dependencies "$(readlink -f -- "$ldconfig")"
     copy_dependencies "$ll_init"
 fi
 
@@ -173,6 +182,7 @@ LINGLONG_BUILDER_CONFIG="$work/builder.yaml" "$ll_builder" import-dir "$app"
 uid=$(id -u)
 expected=$(printf 'APP_RUNTIME_OK:org.example.RuntimeE2E:%s:/run/user/%s\nAPP_ARGS:default-arg' "$uid" "$uid")
 stderr_log=$work/runtime.stderr.log
+runtime_status=0
 output=$(
     HOME="$home" \
     XDG_RUNTIME_DIR="$runtime" \
@@ -185,7 +195,13 @@ output=$(
     LINGLONG_OCI_RUNTIME="$ll_box" \
     LINYAPS_CONTAINER_INIT="$ll_init" \
     "$ll_cli" --no-dbus run org.example.RuntimeE2E 2>"$stderr_log"
-)
+) || runtime_status=$?
+
+if ((runtime_status != 0)); then
+    printf 'runtime invocation failed with status %s\nstderr:\n' "$runtime_status" >&2
+    cat "$stderr_log" >&2
+    exit "$runtime_status"
+fi
 
 if [[ $output != "$expected" ]]; then
     printf 'unexpected runtime output\nexpected:\n%s\nactual:\n%s\nstderr:\n' "$expected" "$output" >&2
