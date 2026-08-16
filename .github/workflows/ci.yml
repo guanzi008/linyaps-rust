@@ -62,6 +62,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
           LINYAPS_E2E_SKIP_BUILD=1 \
           LINYAPS_BUILDER_BINARY="$PWD/target/release/ll-builder" \
           LINYAPS_CLI_BINARY="$PWD/target/release/ll-cli" \
