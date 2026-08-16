@@ -1,0 +1,151 @@
+linyaps CLI
+Программа командной строки для запуска приложений и управления приложениями и средами выполнения
+
+Использование: ll-cli [ПАРАМЕТРЫ] [ПОДКОМАНДА]
+
+Options:
+  -h,--help                   Показать это справочное сообщение и выйти
+  --help-all                  Развернуть всю справку
+  --version                   Показать версию
+  --json                      Использовать формат json для вывода результата
+  -v,--verbose [0]            Show debug info; repeat to enable backtrace
+  --no-progress               Не выводить информацию о процессе
+
+
+Управление запущенными приложениями:
+run
+  Запустить приложение
+  Positionals:
+    APP TEXT REQUIRED           Укажите идентификатор приложения
+    COMMAND TEXT ...            Выполнить команды в запущенной песочнице
+  Options:
+    --file FILE ...             Передать файл приложениям, запущенным в песочнице
+    --url URL ...               Передать URL приложениям, запущенным в песочнице
+    --env ENV ...               Установить переменные окружения для приложения
+    --base REF                  Укажите базу, используемую приложением для запуска
+    --runtime REF               Укажите среду выполнения, используемую приложением для запуска
+    --workdir PATH              Укажите рабочий каталог, в котором запускается приложение
+    --extensions REF ...        Укажите расширение(я), используемое(ые) приложением для запуска
+    --enable-xdp{false},--disable-xdp{true}
+                                Включить или отключить интеграцию, связанную с xdg-desktop-portal, в изолированной среде
+    --enable-pipewire           Enable PipeWire socket mount inside the sandbox
+    --enable-atspi              Enable AT SPI socket mount inside the sandbox
+    --cdi-spec-dir TEXT [[/etc/linglong/cdi,/etc/cdi,/var/run/cdi]]  ...
+                                Каталог спецификаций CDI
+    --device TEXT ...           Добавить устройства CDI
+    --device-mode ENUM:value in {passthru->0} OR {0} ...
+                                Добавить параметры устройства
+    --instance NAME             Укажите имя экземпляра контейнера для повторного использования или идентификации
+    --debug                     Run the application under gdbserver
+    --debug-listen ADDR [127.0.0.1:2345]  Needs: --debug
+                                Specify the gdbserver listen address
+    --debug-debuginfod URLS Needs: --debug
+                                Specify debuginfod urls for debugging
+    --debug-symbol-dir DIR Needs: --debug
+                                Specify the directory used by gdb to load debug symbols
+
+ps
+  Список запущенных приложений
+  Options:
+    --no-truncated              Do not truncate container IDs
+
+enter
+  Войти в пространство имен, где запущено приложение
+  Positionals:
+    INSTANCE TEXT REQUIRED      Укажите запущенный экземпляр приложения (его можно получить командой ps)
+    COMMAND TEXT ...            Выполнить команды в запущенной песочнице
+  Options:
+    --working-directory PATH:DIR
+                                Укажите рабочий каталог
+
+kill
+  Остановить запущенные приложения
+  Positionals:
+    APP TEXT REQUIRED           Укажите запущенное приложение
+  Options:
+    -s,--signal TEXT [SIGTERM]  Укажите сигнал для отправки приложению
+
+prune
+  Удалить неиспользуемую базу или среду выполнения
+
+
+Управление установленными приложениями и средами выполнения:
+install
+  Установка приложения или среды выполнения
+  Positionals:
+    APP TEXT REQUIRED           Укажите идентификатор приложения, это также может быть файл .uab или .layer
+  Options:
+    --module MODULE             Установить указанный модуль
+    --repo REPO                 Установить из определенного репозитория
+    --force                     Принудительно установить приложение
+    -y                          Автоматически отвечать «да» на все вопросы
+    --no-auto-prune             Do not automatically remove unused dependencies
+
+uninstall
+  Удалить приложение или среды выполнения
+  Positionals:
+    APP TEXT REQUIRED           Укажите идентификатор приложения
+  Options:
+    --module MODULE             Удалить указанный модуль
+    --force                     Принудительно удалить базу или среду выполнения
+    --no-auto-prune             Do not automatically remove unused dependencies
+
+upgrade
+  Обновить приложение или среды выполнения
+  Positionals:
+    APP TEXT                    Укажите идентификатор приложения. Если он не указан, будут обновлены все приложения
+  Options:
+    --deps-only                 Обновить только зависимости приложения
+    --no-auto-prune             Do not automatically remove unused dependencies
+
+list
+  Список установленных приложений, баз или сред выполнения
+  Options:
+    --type TYPE [all]           Фильтровать результат по указанному типу. Один из: "runtime", "base", "app" или "all"
+    --upgradable                Показать список последних версий текущих установленных приложений, баз или сред выполнения
+
+analyze
+  Analyze installed applications
+  Управление установленными приложениями и средами выполнения:
+    size                        Show installed module sizes and repository real size
+    depends                     Display installed application dependency tree
+
+info
+  Показать информацию об установленных приложениях или средах выполнения
+  Positionals:
+    APP TEXT REQUIRED           Укажите идентификатор приложения, это также может быть файл .layer
+
+content
+  Показать экспортированные файлы установленного приложения
+  Positionals:
+    APP TEXT REQUIRED           Укажите идентификатор установленного приложения
+
+
+Поиск приложений и сред выполнения:
+search
+  Найти приложения/среды выполнения, содержащие указанный текст, в удаленном репозитории
+  Positionals:
+    KEYWORDS TEXT REQUIRED      Укажите ключевые слова
+  Options:
+    --type TYPE [all]           Фильтровать результат по указанному типу. Один из: "runtime", "base", "app" или "all"
+    --repo REPO                 Укажите репозиторий
+    --dev                       Включить разрабатываемые приложения в результат
+    --show-all-version          Показать все версии приложения(й), базы(аз) или среды(ед) выполнения
+
+
+Управление удаленными репозиториями:
+repo
+  Показать или изменить информацию о текущем используемом репозитории
+  Управление удаленными репозиториями:
+    add                         Добавить новый репозиторий
+    remove                      Удалить репозиторий
+    update                      Обновить URL репозитория
+    set-default                 Установить имя репозитория по умолчанию
+    show                        Показать информацию о репозитории
+    set-priority                Установить приоритет репозитория
+    enable-mirror               Включить зеркало для репозитория
+    disable-mirror              Отключить зеркало для репозитория
+
+
+Если вы обнаружили какие-либо проблемы во время использования,
+вы можете сообщить об ошибках команде linyaps в этом проекте: https://github.com/OpenAtom-Linyaps/linyaps/issues

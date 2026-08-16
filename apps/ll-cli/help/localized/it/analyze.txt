@@ -1,0 +1,13 @@
+Analyze installed applications
+Usage: ll-cli analyze SUBCOMMAND [OPTIONS]
+
+Options:
+  -h,--help                   Mostra questo messaggio di aiuto ed esci
+  --help-all                  Espandi tutto l'aiuto
+
+Gestione delle applicazioni e runtime installati:
+  size                        Show installed module sizes and repository real size
+  depends                     Display installed application dependency tree
+
+Se riscontri problemi durante l'uso,
+puoi segnalare bug al team di linyaps in questo progetto: https://github.com/OpenAtom-Linyaps/linyaps/issues

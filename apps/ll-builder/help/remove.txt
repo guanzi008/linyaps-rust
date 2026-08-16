@@ -1,0 +1,10 @@
+Remove built linyaps app
+Usage: ll-builder remove [OPTIONS] [APP...]
+
+Positionals:
+  APP TEXT ...                
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help
+  --no-clean-objects          Do not clean objects files before remove apps

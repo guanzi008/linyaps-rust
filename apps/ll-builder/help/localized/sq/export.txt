@@ -1,0 +1,20 @@
+Eksportoje te shtresë linyaps, ose uab
+Përdorimi: ll-builder export [MUNDËSI]
+
+Options:
+  -h,--help                   Shtyp këtë mesazh ndihme dhe dil
+  --help-all                  Zgjero krejt ndihmën
+  -f,--file FILE:FILE         Shteg kartele linglong.yaml
+  -z,--compressor X           supported compressors are: lz4(default), lzma, zstd
+  --icon FILE:FILE Excludes: --layer
+                              Ikonë uab (opsionale)
+  --layer Excludes: --icon --loader --output --ref --modules
+                              Export to linyaps layer file (deprecated)
+  --loader FILE:FILE Excludes: --layer
+                              Përdor ngarkues vetjak
+  --no-develop Needs: --layer Mos eksporto modulin e zhvillimit
+  -o,--output FILE Excludes: --layer
+                              Output file
+  --ref REF Excludes: --layer Reference of the package
+  --modules MODULES ... Excludes: --layer
+                              Modules to export

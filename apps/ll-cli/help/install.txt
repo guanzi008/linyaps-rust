@@ -1,0 +1,32 @@
+Installing an application or runtime
+Usage: ll-cli install [OPTIONS] APP
+
+Example:
+# install application by appid
+ll-cli install org.deepin.demo
+# install application by linyaps layer
+ll-cli install ./demo_0.0.0.1_x86_64_binary.layer
+# install application by linyaps uab
+ll-cli install ./demo_x86_64_0.0.0.1_main.uab
+# install specified module of the appid
+ll-cli install org.deepin.demo --module=binary
+# install specified version of the appid
+ll-cli install org.deepin.demo/0.0.0.1
+# install application by detailed reference
+ll-cli install stable:org.deepin.demo/0.0.0.1/x86_64
+    
+
+Positionals:
+  APP TEXT REQUIRED           Specify the application ID, and it can also be a .uab or .layer file
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help
+  --module MODULE             Install a specify module
+  --repo REPO                 Install from a specific repo
+  --force                     Force install the application
+  -y                          Automatically answer yes to all questions
+  --no-auto-prune             Do not automatically remove unused dependencies
+
+If you found any problems during use,
+You can report bugs to the linyaps team under this project: https://github.com/OpenAtom-Linyaps/linyaps/issues

@@ -1,0 +1,10 @@
+[package]
+name = "ll-init"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Linyaps container init and signal forwarder"
+
+[dependencies]
+libc.workspace = true

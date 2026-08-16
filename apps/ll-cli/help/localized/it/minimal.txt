@@ -1,0 +1,8 @@
+CLI di linyaps
+Un programma CLI per eseguire applicazioni e gestire applicazioni e runtime
+
+Usage: [OPTIONS]
+
+Options:
+  -h,--help                   Print this help message and exit
+

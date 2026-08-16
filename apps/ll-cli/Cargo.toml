@@ -1,0 +1,44 @@
+[package]
+name = "ll-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Linyaps command-line client"
+
+[features]
+default = []
+wayland-security-context = [
+    "dep:wayland-client",
+    "dep:wayland-protocols",
+    "rustix/pipe",
+]
+
+[[bin]]
+name = "ll-cli"
+path = "src/main.rs"
+
+[[bin]]
+name = "llpkg"
+path = "src/bin/llpkg.rs"
+
+[dependencies]
+clap.workspace = true
+linyaps-api.workspace = true
+linyaps-core.workspace = true
+linyaps-dbus.workspace = true
+linyaps-i18n.workspace = true
+linyaps-repository.workspace = true
+libc.workspace = true
+rustix.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+zbus.workspace = true
+wayland-client = { workspace = true, optional = true }
+wayland-protocols = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+wayland-protocols = { workspace = true, features = ["server"] }
+wayland-server = "0.31.10"

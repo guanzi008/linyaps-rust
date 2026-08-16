@@ -1,0 +1,151 @@
+linyaps CLI
+Інтерфейс командного рядка для запуску програм і керування програмами та середовищами виконання програм
+
+Користування: ll-cli [ПАРАМЕТРИ] [ПІДКОМАНДА]
+
+Options:
+  -h,--help                   Вивести це довідкове повідомлення і завершити роботу
+  --help-all                  Розгорнути довідку
+  --version                   Показати дані щодо версії
+  --json                      Використати формат json для виведення результату
+  -v,--verbose [0]            Show debug info; repeat to enable backtrace
+  --no-progress               Don't output progress information
+
+
+Керування запущеними програмами:
+run
+  Запустити програму
+  Positionals:
+    APP TEXT REQUIRED           Вказати ідентифікатор програми
+    COMMAND TEXT ...            Запустити команди у запущеній пісочниці
+  Options:
+    --file FILE ...             Передати файл програмам, які запущено у пісочниці
+    --url URL ...               Передати адресу програмам, які запущено у пісочниці
+    --env ENV ...               Встановити змінні середовища для програми
+    --base REF                  Вкажіть основу, на якій запускатиметься програма
+    --runtime REF               Вкажіть середовище виконання, яке використовуватиметься для роботи програми
+    --workdir PATH              Specify the working directory where the application runs
+    --extensions REF ...        Specify extension(s) used by the application to run
+    --enable-xdp{false},--disable-xdp{true}
+                                Enable or disable xdg-desktop-portal related integration inside the sandbox
+    --enable-pipewire           Enable PipeWire socket mount inside the sandbox
+    --enable-atspi              Enable AT SPI socket mount inside the sandbox
+    --cdi-spec-dir TEXT [[/etc/linglong/cdi,/etc/cdi,/var/run/cdi]]  ...
+                                CDI spec directory
+    --device TEXT ...           Add CDI devices
+    --device-mode ENUM:value in {passthru->0} OR {0} ...
+                                Add device options
+    --instance NAME             Specify the container instance name for reuse or identification
+    --debug                     Run the application under gdbserver
+    --debug-listen ADDR [127.0.0.1:2345]  Needs: --debug
+                                Specify the gdbserver listen address
+    --debug-debuginfod URLS Needs: --debug
+                                Specify debuginfod urls for debugging
+    --debug-symbol-dir DIR Needs: --debug
+                                Specify the directory used by gdb to load debug symbols
+
+ps
+  Вивести список запущених програм
+  Options:
+    --no-truncated              Do not truncate container IDs
+
+enter
+  Введіть простір назв, у якому запущено програму
+  Positionals:
+    INSTANCE TEXT REQUIRED      Вказати запущений екземпляр програми (отримати його можна за допомогою команди ps)
+    COMMAND TEXT ...            Запустити команди у запущеній пісочниці
+  Options:
+    --working-directory PATH:DIR
+                                Вказати робочий каталог
+
+kill
+  Зупинити запущені програми
+  Positionals:
+    APP TEXT REQUIRED           Вказати запущену програму
+  Options:
+    -s,--signal TEXT [SIGTERM]  Вказати сигнал для надсилання програмі
+
+prune
+  Вилучити невикористану основу або середовище виконання
+
+
+Керування встановленими програмами і середовищами виконання:
+install
+  Встановлення програми або середовища виконання
+  Positionals:
+    APP TEXT REQUIRED           Вказати за ідентифікатором програми, також можна вказати файл .uab або .layer
+  Options:
+    --module MODULE             Встановити вказаний модуль
+    --repo REPO                 Встановити з певного сховища
+    --force                     Примусово встановити програму
+    -y                          Автоматично відповідати «так» на усі питання
+    --no-auto-prune             Do not automatically remove unused dependencies
+
+uninstall
+  Вилучити програму або середовища виконання
+  Positionals:
+    APP TEXT REQUIRED           Вказати ідентифікатори програм
+  Options:
+    --module MODULE             Вилучити вказаний модуль
+    --force                     Force uninstall base or runtime
+    --no-auto-prune             Do not automatically remove unused dependencies
+
+upgrade
+  Оновити програму або середовища виконання
+  Positionals:
+    APP TEXT                    Вказати ідентифікатор програми. Якщо не вказано, буде оновлено усі програми
+  Options:
+    --deps-only                 Only upgrade dependencies of application
+    --no-auto-prune             Do not automatically remove unused dependencies
+
+list
+  Вивести список встановлених програм, основ або середовищ виконання
+  Options:
+    --type TYPE [all]           Фільтрувати результат за типом. Одне зі значень, «runtime», «base», «app» або «all»
+    --upgradable                Вивести список найсвіжіших встановлених програм, основ або середовищ виконання
+
+analyze
+  Analyze installed applications
+  Керування встановленими програмами і середовищами виконання:
+    size                        Show installed module sizes and repository real size
+    depends                     Display installed application dependency tree
+
+info
+  Вивести дані щодо встановлених програм або середовищ виконання
+  Positionals:
+    APP TEXT REQUIRED           Вказати за ідентифікатором програми, також можна вказати файл .layer
+
+content
+  Показати експортовані файли встановленої програми
+  Positionals:
+    APP TEXT REQUIRED           Вказати ідентифікатор встановленої програми
+
+
+Пошук програм і середовищ виконання:
+search
+  Шукати у віддаленому сховищі програми або середовища виконання, назви яких містять вказаний текст
+  Positionals:
+    KEYWORDS TEXT REQUIRED      Вказати ключові слова
+  Options:
+    --type TYPE [all]           Фільтрувати результат за типом. Одне зі значень, «runtime», «base», «app» або «all»
+    --repo REPO                 Вказати сховище
+    --dev                       Включити до результату програми у розробці
+    --show-all-version          Показати усі версії програм, основ або середовищ виконання
+
+
+Керування віддаленими сховищами:
+repo
+  Вивести або змінити дані поточного використаного сховища
+  Керування віддаленими сховищами:
+    add                         Додати новий запис сховища
+    remove                      Вилучити запис сховища
+    update                      Оновити адресу сховища
+    set-default                 Встановити назву типового сховища
+    show                        Вивести дані сховища
+    set-priority                Встановити пріоритетність сховища
+    enable-mirror               Увімкнути дзеркало для сховища
+    disable-mirror              Вимкнути дзеркало для сховища
+
+
+Якщо під час користування у вас виникнуть якісь проблеми,
+ви можете повідомити про вади команді розробників linyaps на сторінці проєкту: https://github.com/OpenAtom-Linyaps/linyaps/issues

@@ -1,0 +1,112 @@
+linyaps builder CLI 
+A CLI program to build linyaps application
+
+Usage: ll-builder [OPTIONS] [SUBCOMMAND]
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help
+  --version                   Show version
+
+Subcommands:
+create
+  Create linyaps build template project
+  Positionals:
+    NAME TEXT REQUIRED          Project name
+
+build
+  Build a linyaps project
+  Positionals:
+    COMMAND TEXT ...            Enter the container to execute command instead of building applications
+  Options:
+    -f,--file FILE:FILE         File path of the linglong.yaml
+    --offline                   Only use local files. This implies --skip-fetch-source and --skip-pull-depend will be set
+    --skip-fetch-source         Skip fetch sources
+    --skip-pull-depend          跳過拉取依賴項
+    --skip-run-container        跳過運行容器
+    --skip-commit-output        跳過提交構建輸出
+    --skip-output-check         跳過輸出檢查
+    --skip-strip-symbols        跳過清除除錯符號（strip）
+    --isolate-network           在隔離的網絡環境中進行構建
+
+run
+  運行已構建的 linyaps 應用程式
+  Positionals:
+    COMMAND TEXT ...            進入容器以執行命令，而不是運行應用程式
+  Options:
+    -f,--file FILE:FILE         File path of the linglong.yaml
+    --modules modules ...       運行指定模組。例如：--modules binary,develop
+    --workdir PATH              指定應用程式運行的工作目錄
+    --debug                     以除錯模式運行（啟用開發開發模組）
+    --extensions REF ...        指定應用程式運行所需的擴充模組
+
+list
+  列出已構建的 linyaps 應用程式
+
+remove
+  移除已構建的 linyaps 應用程式
+  Positionals:
+    APP TEXT ...                
+  Options:
+    --no-clean-objects          移除應用程式前不清除中間目的檔案（object files）
+
+export
+  匯出為 linyaps layer 或 uab 檔案
+  Options:
+    -f,--file FILE:FILE         File path of the linglong.yaml
+    -z,--compressor X           supported compressors are: lz4(default), lzma, zstd
+    --icon FILE:FILE Excludes: --layer
+                                Uab 圖示（選填）
+    --layer Excludes: --icon --loader --output --ref --modules
+                                匯出為 linyaps layer 檔案（已棄用）
+    --loader FILE:FILE Excludes: --layer
+                                使用自訂載入器
+    --no-develop Needs: --layer 不匯出開發（develop）模組
+    -o,--output FILE Excludes: --layer
+                                輸出檔案
+    --ref REF Excludes: --layer 套件的引用資訊（Reference）
+    --modules MODULES ... Excludes: --layer
+                                要匯出的模組
+
+push
+  將 linyaps 應用程式推送到遠端倉庫
+  Options:
+    -f,--file FILE:FILE         File path of the linglong.yaml
+    --repo-url URL              遠端倉庫 URL
+    --repo-name NAME            遠端倉庫名稱
+    --module TEXT               推送單一模組
+
+import
+  匯入 linyaps layer 到構建倉庫
+  Positionals:
+    LAYER FILE:FILE REQUIRED    Layer 檔案路徑
+
+extract
+  解壓 linyaps layer 到目錄
+  Positionals:
+    LAYER TEXT:FILE REQUIRED    Layer 檔案路徑
+    DIR DIR REQUIRED            目標目錄
+
+clean
+  Clean build artifacts
+  Options:
+    -f,--file FILE:FILE         File path of the linglong.yaml
+
+
+Managing remote repositories:
+repo
+  顯示或修改當前正在使用的倉庫資訊
+  Managing remote repositories:
+    add                         新增一個倉庫
+    remove                      移除一個倉庫
+    update                      更新倉庫 URL
+    set-default                 設置預設倉庫名稱
+    show                        顯示倉庫資訊
+    set-priority                設置倉庫的優先級
+    enable-mirror               啟用該倉庫的鏡像（Mirror）
+    disable-mirror              停用該倉庫的鏡像（Mirror）
+
+
+If you found any problems during use
+You can report bugs to the linyaps team under this project: https://github.com/OpenAtom-Linyaps/linyaps/issues
+

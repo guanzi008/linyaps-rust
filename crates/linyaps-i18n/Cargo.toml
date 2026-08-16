@@ -1,0 +1,9 @@
+[package]
+name = "linyaps-i18n"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Pure Rust gettext-compatible catalog support for Linyaps"
+
+[dependencies]

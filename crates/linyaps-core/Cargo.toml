@@ -1,0 +1,22 @@
+[package]
+name = "linyaps-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Core domain rules for the Linyaps Rust rewrite"
+
+[dependencies]
+linyaps-api.workspace = true
+oci-spec.workspace = true
+rustix.workspace = true
+rustls-rustcrypto.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yml.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3.27.0"

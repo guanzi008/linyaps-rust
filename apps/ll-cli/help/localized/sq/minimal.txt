@@ -1,0 +1,8 @@
+linyaps CLI
+Një program CLI për të xhiruar dhe administruar aplikacion dhe “runtime”
+
+Usage: [OPTIONS]
+
+Options:
+  -h,--help                   Print this help message and exit
+

@@ -1,0 +1,15 @@
+進入應用程式執行中的命名空間（Namespace）
+用法：ll-cli [選項] [子命令]
+
+Positionals:
+  INSTANCE TEXT REQUIRED      指定應用程式的執行實例（可透過 ps 命令獲取）
+  COMMAND TEXT ...            在執行中的沙盒內執行命令
+
+Options:
+  -h,--help                   顯示此說明訊息並離開
+  --help-all                  展開所有說明
+  --working-directory PATH:DIR
+                              指定工作目錄
+
+如果您在使用過程中遇到任何問題，
+可以在此專案下向 linyaps 團隊回報錯誤：https://github.com/OpenAtom-Linyaps/linyaps/issues

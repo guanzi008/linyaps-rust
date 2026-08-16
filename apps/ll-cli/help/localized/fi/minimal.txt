@@ -1,0 +1,8 @@
+linyaps CLI
+Ohjelma sovellusten suorittamiseen ja ajoympäristön hallintaan
+
+Usage: [OPTIONS]
+
+Options:
+  -h,--help                   Print this help message and exit
+

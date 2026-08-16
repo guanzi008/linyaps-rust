@@ -1,0 +1,8 @@
+如意玲珑 CLI
+一个用于运行应用程序和管理应用程序和运行时的命令行工具
+
+Usage: [OPTIONS]
+
+Options:
+  -h,--help                   Print this help message and exit
+

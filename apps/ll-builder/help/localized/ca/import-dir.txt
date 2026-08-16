@@ -1,0 +1,9 @@
+Importa el directori de la capa de linyaps al repositori de construcció.
+Usage: ll-builder import-dir PATH
+
+Positionals:
+  PATH PATH REQUIRED          Camí del directori de la capa
+
+Options:
+  -h,--help                   Imprimeix aquest missatge d'ajuda i surt.
+  --help-all                  Expandeix tota l'ajuda.

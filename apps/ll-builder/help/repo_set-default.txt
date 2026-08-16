@@ -1,0 +1,9 @@
+Set a default repository name
+Usage: ll-builder repo set-default [OPTIONS] NAME
+
+Positionals:
+  ALIAS TEXT REQUIRED         Alias of the repo name
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help

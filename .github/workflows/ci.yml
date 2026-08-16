@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check out paired OCI runtime
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository_owner }}/linyaps-box-rust
+          path: linyaps-box-rust
+      - name: Install Rust toolchain
+        run: rustup toolchain install 1.92.0 --profile minimal --component rustfmt,clippy --target x86_64-unknown-linux-musl
+      - name: Check formatting
+        run: cargo +1.92.0 fmt --all -- --check
+      - name: Run Clippy
+        run: cargo +1.92.0 clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Run tests
+        run: cargo +1.92.0 test --workspace --all-targets --all-features --locked
+      - name: Build release binaries
+        run: cargo +1.92.0 build --workspace --release --locked
+      - name: Build and verify static ll-init
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.92.0 build -p ll-init --release --locked --target x86_64-unknown-linux-musl
+          init=target/x86_64-unknown-linux-musl/release/ll-init
+          file "$init" | grep -q 'statically linked'
+          if readelf -l "$init" | grep -q 'INTERP\|Requesting program interpreter'; then
+            echo "ll-init must not contain a dynamic interpreter" >&2
+            exit 1
+          fi
+          cp "$init" target/release/ll-init
+          cargo +1.92.0 build --manifest-path linyaps-box-rust/Cargo.toml --release --locked
+          root="$RUNNER_TEMP/install-root"
+          target/release/ll-system-helper install \
+            --destdir "$root" \
+            --prefix /usr \
+            --binary-dir target/release \
+            --ll-box linyaps-box-rust/target/release/ll-box
+          test -x "$root/usr/libexec/linglong/ll-init"
+          test -x "$root/usr/bin/ll-cli"
+          test -x "$root/usr/bin/ll-box"
+          test -f "$root/usr/lib/systemd/system/org.deepin.linglong.PackageManager.service"
+          test "$(find "$root" -type f | wc -l)" -eq 145
+      - name: Run cross-repository runtime E2E
+        shell: bash
+        run: |
+          set -euo pipefail
+          LINYAPS_E2E_SKIP_BUILD=1 \
+          LINYAPS_BUILDER_BINARY="$PWD/target/release/ll-builder" \
+          LINYAPS_CLI_BINARY="$PWD/target/release/ll-cli" \
+          LINYAPS_INIT_BINARY="$PWD/target/release/ll-init" \
+          LINYAPS_PACKAGE_MANAGER_BINARY="$PWD/target/release/ll-package-manager" \
+          LINYAPS_BOX_BINARY="$PWD/linyaps-box-rust/target/release/ll-box" \
+          LINYAPS_BOX_PROJECT="$PWD/linyaps-box-rust" \
+          tests/system/runtime-e2e.sh
+      - name: Audit implementation language
+        shell: bash
+        run: |
+          set -euo pipefail
+          native_sources=$(find . \
+            -type d \( -name '.git' -o -name 'target' \) -prune -o \
+            -type f \( \
+              -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.cxx' -o \
+              -name '*.m' -o -name '*.mm' -o -name '*.S' -o -name '*.s' -o \
+              -name '*.asm' -o -name '*.go' -o -name '*.py' -o -name '*.pyx' \
+            \) -print)
+          if [[ -n "$native_sources" ]]; then
+            printf 'non-Rust implementation sources found:\n%s\n' "$native_sources" >&2
+            exit 1
+          fi
+          dependency_tree=$(cargo +1.92.0 tree --target x86_64-unknown-linux-gnu -e normal,build --prefix none)
+          if grep -Eq '^(openssl-sys|libgit2-sys|curl-sys|aws-lc-sys|ring) v' <<<"$dependency_tree"; then
+            printf 'native TLS or Git dependency found:\n%s\n' "$dependency_tree" >&2
+            exit 1
+          fi

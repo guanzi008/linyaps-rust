@@ -1,0 +1,23 @@
+Analyze installed applications
+Usage: ll-cli analyze SUBCOMMAND [OPTIONS]
+
+Options:
+  -h,--help                   Показать это справочное сообщение и выйти
+  --help-all                  Развернуть всю справку
+
+Управление установленными приложениями и средами выполнения:
+size
+  Show installed module sizes and repository real size
+  Options:
+    --sort FIELD:{actual,logical,exclusive,shared,id} [actual] 
+                                Sort result by specify field. One of "actual", "logical", "exclusive", "shared" or "id"
+    --asc                       Sort in ascending order
+
+depends
+  Display installed application dependency tree
+  Positionals:
+    APP TEXT                    Укажите идентификатор установленного приложения
+
+
+Если вы обнаружили какие-либо проблемы во время использования,
+вы можете сообщить об ошибках команде linyaps в этом проекте: https://github.com/OpenAtom-Linyaps/linyaps/issues

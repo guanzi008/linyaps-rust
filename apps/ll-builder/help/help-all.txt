@@ -1,0 +1,112 @@
+linyaps builder CLI 
+A CLI program to build linyaps application
+
+Usage: ll-builder [OPTIONS] [SUBCOMMAND]
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help
+  --version                   Show version
+
+Subcommands:
+create
+  Create linyaps build template project
+  Positionals:
+    NAME TEXT REQUIRED          Project name
+
+build
+  Build a linyaps project
+  Positionals:
+    COMMAND TEXT ...            Enter the container to execute command instead of building applications
+  Options:
+    -f,--file FILE:FILE         File path of the linglong.yaml
+    --offline                   Only use local files. This implies --skip-fetch-source and --skip-pull-depend will be set
+    --skip-fetch-source         Skip fetch sources
+    --skip-pull-depend          Skip pull dependency
+    --skip-run-container        Skip run container
+    --skip-commit-output        Skip commit build output
+    --skip-output-check         Skip output check
+    --skip-strip-symbols        Skip strip debug symbols
+    --isolate-network           Build in an isolated network environment
+
+run
+  Run built linyaps app
+  Positionals:
+    COMMAND TEXT ...            Enter the container to execute command instead of running application
+  Options:
+    -f,--file FILE:FILE         File path of the linglong.yaml
+    --modules modules ...       Run specified module. eg: --modules binary,develop
+    --workdir PATH              Specify the working directory where the application runs
+    --debug                     Run in debug mode (enable develop module)
+    --extensions REF ...        Specify extension(s) used by the app to run
+
+list
+  List built linyaps app
+
+remove
+  Remove built linyaps app
+  Positionals:
+    APP TEXT ...                
+  Options:
+    --no-clean-objects          Do not clean objects files before remove apps
+
+export
+  Export to linyaps layer or uab
+  Options:
+    -f,--file FILE:FILE         File path of the linglong.yaml
+    -z,--compressor X           supported compressors are: lz4(default), lzma, zstd
+    --icon FILE:FILE Excludes: --layer
+                                Uab icon (optional)
+    --layer Excludes: --icon --loader --output --ref --modules
+                                Export to linyaps layer file (deprecated)
+    --loader FILE:FILE Excludes: --layer
+                                Use custom loader
+    --no-develop Needs: --layer Don't export the develop module
+    -o,--output FILE Excludes: --layer
+                                Output file
+    --ref REF Excludes: --layer Reference of the package
+    --modules MODULES ... Excludes: --layer
+                                Modules to export
+
+push
+  Push linyaps app to remote repo
+  Options:
+    -f,--file FILE:FILE         File path of the linglong.yaml
+    --repo-url URL              Remote repo url
+    --repo-name NAME            Remote repo name
+    --module TEXT               Push single module
+
+import
+  Import linyaps layer to build repo
+  Positionals:
+    LAYER FILE:FILE REQUIRED    Layer file path
+
+extract
+  Extract linyaps layer to dir
+  Positionals:
+    LAYER TEXT:FILE REQUIRED    Layer file path
+    DIR DIR REQUIRED            Destination directory
+
+clean
+  Clean build artifacts
+  Options:
+    -f,--file FILE:FILE         File path of the linglong.yaml
+
+
+Managing remote repositories:
+repo
+  Display or modify information of the repository currently using
+  Managing remote repositories:
+    add                         Add a new repository
+    remove                      Remove a repository
+    update                      Update the repository URL
+    set-default                 Set a default repository name
+    show                        Show repository information
+    set-priority                Set the priority of the repo
+    enable-mirror               Enable mirror for the repo
+    disable-mirror              Disable mirror for the repo
+
+
+If you found any problems during use
+You can report bugs to the linyaps team under this project: https://github.com/OpenAtom-Linyaps/linyaps/issues
+

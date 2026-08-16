@@ -1,0 +1,8 @@
+linyaps CLI
+Aplikacja wiersza poleceń do uruchamiania i zarządzania aplikacjami oraz środowiskami wykonawczymi
+
+Usage: [OPTIONS]
+
+Options:
+  -h,--help                   Print this help message and exit
+

@@ -1,0 +1,9 @@
+Définir un nom de référentiel par défaut
+Usage: ll-builder repo set-default [OPTIONS] NAME
+
+Positionals:
+  ALIAS TEXT REQUIRED         Alias du nom du dépôt
+
+Options:
+  -h,--help                   Imprimer ce message d'aide et quitter
+  --help-all                  Développer toute l'aide

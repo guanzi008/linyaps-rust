@@ -1,0 +1,32 @@
+安装应用程序或运行时
+Usage: ll-cli install [OPTIONS] APP
+
+Example:
+# install application by appid
+ll-cli install org.deepin.demo
+# install application by linyaps layer
+ll-cli install ./demo_0.0.0.1_x86_64_binary.layer
+# install application by linyaps uab
+ll-cli install ./demo_x86_64_0.0.0.1_main.uab
+# install specified module of the appid
+ll-cli install org.deepin.demo --module=binary
+# install specified version of the appid
+ll-cli install org.deepin.demo/0.0.0.1
+# install application by detailed reference
+ll-cli install stable:org.deepin.demo/0.0.0.1/x86_64
+    
+
+Positionals:
+  APP TEXT REQUIRED           指定应用名，也可以是 .uab 或 .layer 文件
+
+Options:
+  -h,--help                   打印帮助信息并退出
+  --help-all                  展开所有帮助
+  --module MODULE             安装指定模块
+  --repo REPO                 从指定的仓库安装
+  --force                     强制安装指定版本的应用程序
+  -y                          自动对所有问题回答是
+  --no-auto-prune             Do not automatically remove unused dependencies
+
+如果在使用过程中遇到任何问题，
+您可以通过此项目向如意玲珑项目团队报告错误：https://github.com/OpenAtom-Linyaps/linyaps/issues

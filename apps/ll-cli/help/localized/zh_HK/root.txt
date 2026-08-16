@@ -1,0 +1,38 @@
+linyaps CLI
+A CLI program to run application and manage application and runtime
+
+Usage: ll-cli [OPTIONS] [SUBCOMMAND]
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help
+  --version                   Show version
+  --json                      Use json format to output result
+  -v,--verbose [0]            Show debug info; repeat to enable backtrace
+  --no-progress               Don't output progress information
+
+
+Managing running applications:
+  run                         運行應用程式
+  ps                          列出正在運行的應用程式
+  enter                       進入應用程式執行中的命名空間（Namespace）
+  kill                        停止運行的應用程式
+  prune                       Remove the unused base or runtime
+
+Managing installed applications and runtimes:
+  install                     安裝應用程式或運行時（Runtime）
+  uninstall                   解除安裝應用程式或運行時（Runtime）
+  upgrade                     升級應用程式或運行時（Runtime）
+  list                        List installed application(s), base(s) or runtime(s)
+  analyze                     Analyze installed applications
+  info                        Display information about installed apps or runtimes
+  content                     Display the exported files of installed application
+
+Finding applications and runtimes:
+  search                      Search the applications/runtimes containing the specified text from the remote repository
+
+Managing remote repositories:
+  repo                        顯示或修改當前正在使用的倉庫資訊
+
+If you found any problems during use,
+You can report bugs to the linyaps team under this project: https://github.com/OpenAtom-Linyaps/linyaps/issues

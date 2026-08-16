@@ -1,0 +1,51 @@
+Display or modify information of the repository currently using
+Usage: ll-builder repo SUBCOMMAND [OPTIONS]
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help
+
+Managing remote repositories:
+add
+  Add a new repository
+  Positionals:
+    NAME TEXT REQUIRED          Specify the repo name
+    URL TEXT REQUIRED           Url of the repository
+  Options:
+    --alias ALIAS               Alias of the repo name
+
+remove
+  Remove a repository
+  Positionals:
+    ALIAS TEXT REQUIRED         Alias of the repo name
+
+update
+  Update the repository URL
+  Positionals:
+    ALIAS TEXT REQUIRED         Alias of the repo name
+    URL TEXT REQUIRED           Url of the repository
+
+set-default
+  Set a default repository name
+  Positionals:
+    ALIAS TEXT REQUIRED         Alias of the repo name
+
+show
+  Show repository information
+
+set-priority
+  Set the priority of the repo
+  Positionals:
+    ALIAS TEXT REQUIRED         Alias of the repo name
+    PRIORITY INT REQUIRED       Priority of the repo
+
+enable-mirror
+  Enable mirror for the repo
+  Positionals:
+    ALIAS TEXT REQUIRED         Alias of the repo name
+
+disable-mirror
+  Disable mirror for the repo
+  Positionals:
+    ALIAS TEXT REQUIRED         Alias of the repo name
+

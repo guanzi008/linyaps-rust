@@ -1,0 +1,6 @@
+Show repository information
+Usage: ll-builder repo show [OPTIONS]
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help

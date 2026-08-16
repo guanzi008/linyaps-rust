@@ -1,0 +1,14 @@
+Run built linyaps app
+Usage: ll-builder run [OPTIONS] [COMMAND...]
+
+Positionals:
+  COMMAND TEXT ...            Enter the container to execute command instead of running application
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help
+  -f,--file FILE:FILE         File path of the linglong.yaml
+  --modules modules ...       Run specified module. eg: --modules binary,develop
+  --workdir PATH              Specify the working directory where the application runs
+  --debug                     Run in debug mode (enable develop module)
+  --extensions REF ...        Specify extension(s) used by the app to run

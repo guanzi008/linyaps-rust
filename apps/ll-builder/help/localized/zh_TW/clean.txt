@@ -1,0 +1,7 @@
+Clean build artifacts
+Usage: ll-builder clean
+
+Options:
+  -h,--help                   顯示此說明訊息並離開
+  --help-all                  展開所有說明
+  -f,--file FILE:FILE         linglong.yaml 的檔案路徑

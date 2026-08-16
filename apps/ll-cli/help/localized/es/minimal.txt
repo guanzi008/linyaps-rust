@@ -1,0 +1,8 @@
+linyaps CLI
+Un programa CLI para ejecutar aplicaciones y gestionar aplicaciones y entornos de ejecución
+
+Usage: [OPTIONS]
+
+Options:
+  -h,--help                   Print this help message and exit
+

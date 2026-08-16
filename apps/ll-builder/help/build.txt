@@ -1,0 +1,19 @@
+Build a linyaps project
+Usage: ll-builder build [OPTIONS] [COMMAND...]
+
+Positionals:
+  COMMAND TEXT ...            Enter the container to execute command instead of building applications
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help
+  -f,--file FILE:FILE         File path of the linglong.yaml
+  --offline                   Only use local files. This implies --skip-fetch-source and --skip-pull-depend will be set
+  --skip-fetch-source         Skip fetch sources
+  --skip-pull-depend          Skip pull dependency
+  --skip-run-container        Skip run container
+  --skip-commit-output        Skip commit build output
+  --skip-output-check         Skip output check
+  --skip-strip-symbols        Skip strip debug symbols
+  --isolate-network           Build in an isolated network environment
+

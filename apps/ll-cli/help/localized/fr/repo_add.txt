@@ -1,0 +1,14 @@
+Ajouter un nouveau répertoire
+Usage: ll-cli repo add [OPTIONS] NAME URL
+
+Positionals:
+  NAME TEXT REQUIRED          Spécifie le nom du répertoire
+  URL TEXT REQUIRED           L'adresse du répertoire
+
+Options:
+  -h,--help                   Imprimer ce message d'aide et quitter
+  --help-all                  Développer toute l'aide
+  --alias ALIAS               Alias du nom du dépôt
+
+Si vous avez rencontré des problèmes lors de l'utilisation,
+Vous pouvez signaler les bogues à l'équipe linyaps dans le cadre de ce projet : https://github.com/OpenAtom-Linyaps/linyaps/issues

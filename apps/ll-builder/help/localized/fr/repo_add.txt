@@ -1,0 +1,11 @@
+Ajouter un nouveau répertoire
+Usage: ll-builder repo add [OPTIONS] NAME URL
+
+Positionals:
+  NAME TEXT REQUIRED          Spécifie le nom du répertoire
+  URL TEXT REQUIRED           L'adresse du répertoire
+
+Options:
+  -h,--help                   Imprimer ce message d'aide et quitter
+  --help-all                  Développer toute l'aide
+  --alias ALIAS               Alias du nom du dépôt

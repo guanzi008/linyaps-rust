@@ -1,0 +1,112 @@
+linyaps builder CLI 
+Një program CLI për montim aplikacionesh linyaps
+
+Përdorimi: ll-builder [MUNDËSI] [NËNURDHËR]
+
+Options:
+  -h,--help                   Shtyp këtë mesazh ndihme dhe dil
+  --help-all                  Zgjero krejt ndihmën
+  --version                   Shfaq versionin
+
+Subcommands:
+create
+  Krijoni projekt gjedhe montimi linyaps
+  Positionals:
+    NAME TEXT REQUIRED          Emër projekti
+
+build
+  Ndërtoni një projekt linyaps
+  Positionals:
+    COMMAND TEXT ...            Jepni kontejnerin ku të ekzekutohet urdhri, në vend se të montohen aplikacione
+  Options:
+    -f,--file FILE:FILE         Shteg kartele linglong.yaml
+    --offline                   Përdor vetëm kartela vendore. Kjo nënkupton se do të përdoren --skip-fetch-source dhe --skip-pull-depend
+    --skip-fetch-source         Anashkalo sjellje burimesh
+    --skip-pull-depend          Anashkalo marrje varësish
+    --skip-run-container        Anashkalo xhirim kontejneri
+    --skip-commit-output        Skip commit build output
+    --skip-output-check         Anashkalo kontroll të ç’jepet si përfundim
+    --skip-strip-symbols        Anashkalo heqje simbolesh diagnostikimi
+    --isolate-network           Montoni në një mjedis të izoluar rrjeti
+
+run
+  Run built linyaps app
+  Positionals:
+    COMMAND TEXT ...            Për ekzekutimin e urdhrit hyr në kontejner, në vend të xhirimit të aplikacionit
+  Options:
+    -f,--file FILE:FILE         Shteg kartele linglong.yaml
+    --modules modules ...       Xhiro modulin e treguar. P. sh.: --modules binary,develop
+    --workdir PATH              Specify the working directory where the application runs
+    --debug                     Xhiroje nën mënyrën diagnostikim (aktivizoni modulin “develop”)
+    --extensions REF ...        Specify extension(s) used by the app to run
+
+list
+  List built linyaps app
+
+remove
+  Remove built linyaps app
+  Positionals:
+    APP TEXT ...                
+  Options:
+    --no-clean-objects          Do not clean objects files before remove apps
+
+export
+  Eksportoje te shtresë linyaps, ose uab
+  Options:
+    -f,--file FILE:FILE         Shteg kartele linglong.yaml
+    -z,--compressor X           supported compressors are: lz4(default), lzma, zstd
+    --icon FILE:FILE Excludes: --layer
+                                Ikonë uab (opsionale)
+    --layer Excludes: --icon --loader --output --ref --modules
+                                Export to linyaps layer file (deprecated)
+    --loader FILE:FILE Excludes: --layer
+                                Përdor ngarkues vetjak
+    --no-develop Needs: --layer Mos eksporto modulin e zhvillimit
+    -o,--output FILE Excludes: --layer
+                                Output file
+    --ref REF Excludes: --layer Reference of the package
+    --modules MODULES ... Excludes: --layer
+                                Modules to export
+
+push
+  Kaloje aplikacionin linyaps te depoja e largët
+  Options:
+    -f,--file FILE:FILE         Shteg kartele linglong.yaml
+    --repo-url URL              URL depoje të largët
+    --repo-name NAME            Emër depoje të largët
+    --module TEXT               Push single module
+
+import
+  Import linyaps layer to build repo
+  Positionals:
+    LAYER FILE:FILE REQUIRED    Shteg kartele shtrese
+
+extract
+  Përfto shtresë linyaps te drejtoria
+  Positionals:
+    LAYER TEXT:FILE REQUIRED    Shteg kartele shtrese
+    DIR DIR REQUIRED            Drejtori vendmbërritje
+
+clean
+  Clean build artifacts
+  Options:
+    -f,--file FILE:FILE         Shteg kartele linglong.yaml
+
+
+Po administrohen depo të largëta:
+repo
+  Shfaqni ose ndryshoni hollësi të depos aktualisht në përdorim
+  Po administrohen depo të largëta:
+    add                         Shtoni depo të re
+    remove                      Hiqni një depo
+    update                      Përditësoni URL-në e depos
+    set-default                 Caktoni një emër depoje parazgjedhje
+    show                        Shfaq hollësi depoje
+    set-priority                Caktoni përparësinë e depos
+    enable-mirror               Enable mirror for the repo
+    disable-mirror              Disable mirror for the repo
+
+
+If you found any problems during use
+You can report bugs to the linyaps team under this project: https://github.com/OpenAtom-Linyaps/linyaps/issues
+

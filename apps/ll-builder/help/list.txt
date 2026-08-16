@@ -1,0 +1,6 @@
+List built linyaps app
+Usage: ll-builder list [OPTIONS]
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help

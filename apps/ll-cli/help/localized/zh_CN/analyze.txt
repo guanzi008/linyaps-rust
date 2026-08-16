@@ -1,0 +1,13 @@
+Analyze installed applications
+Usage: ll-cli analyze SUBCOMMAND [OPTIONS]
+
+Options:
+  -h,--help                   打印帮助信息并退出
+  --help-all                  展开所有帮助
+
+管理已安装的应用程序和运行时:
+  size                        Show installed module sizes and repository real size
+  depends                     Display installed application dependency tree
+
+如果在使用过程中遇到任何问题，
+您可以通过此项目向如意玲珑项目团队报告错误：https://github.com/OpenAtom-Linyaps/linyaps/issues

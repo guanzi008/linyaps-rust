@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Linyaps
+Encoding=UTF-8
+Type=Application
+Icon=linyaps
+Exec=/usr/bin/ll-cli install %f
+NoDisplay=true
+Terminal=true
+Name[zh_CN]=如意玲珑
+MimeType=application/vnd.linyaps.uab;

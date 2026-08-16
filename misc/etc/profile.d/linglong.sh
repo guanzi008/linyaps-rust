@@ -1,0 +1,4 @@
+if [ -r /usr/lib/linglong/generate-xdg-data-dirs.sh ]; then
+    . /usr/lib/linglong/generate-xdg-data-dirs.sh
+    [ -n "${XDG_DATA_DIRS}" ] && export XDG_DATA_DIRS
+fi

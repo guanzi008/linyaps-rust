@@ -1,0 +1,38 @@
+linyaps 命令列介面
+一個用來執行應用程式並管理應用程式與執行時環境的命令列工具
+
+用法：ll-cli [選項] [子命令]
+
+Options:
+  -h,--help                   顯示此說明訊息並離開
+  --help-all                  展開所有說明
+  --version                   顯示版本
+  --json                      使用 JSON 格式輸出結果
+  -v,--verbose [0]            Show debug info; repeat to enable backtrace
+  --no-progress               不輸出進度資訊
+
+
+管理執行中的應用程式:
+  run                         執行應用程式
+  ps                          列出正在執行的應用程式
+  enter                       進入應用程式執行中的命名空間（Namespace）
+  kill                        停止執行的應用程式
+  prune                       移除未使用的基礎環境或執行時環境
+
+管理已安裝的應用程式與執行時環境:
+  install                     安裝應用程式或執行時環境（Runtime）
+  uninstall                   解除安裝應用程式或執行時環境（Runtime）
+  upgrade                     升級應用程式或執行時環境（Runtime）
+  list                        列出已安裝的應用程式、基礎環境或執行時環境
+  analyze                     Analyze installed applications
+  info                        顯示已安裝應用程式或執行時環境的資訊
+  content                     顯示已安裝應用程式的匯出檔案
+
+尋找應用程式與執行時環境:
+  search                      從遠端軟體庫中搜尋包含指定文字的應用程式/執行時環境
+
+管理遠端軟體庫:
+  repo                        顯示或修改目前正在使用的軟體庫資訊
+
+如果您在使用過程中遇到任何問題，
+可以在此專案下向 linyaps 團隊回報錯誤：https://github.com/OpenAtom-Linyaps/linyaps/issues

@@ -1,0 +1,9 @@
+Remove a repository
+Usage: ll-builder repo remove [OPTIONS] NAME
+
+Positionals:
+  ALIAS TEXT REQUIRED         Alias of the repo name
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help

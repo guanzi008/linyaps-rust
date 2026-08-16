@@ -1,0 +1,9 @@
+Disable mirror for the repo
+Usage: ll-builder repo disable-mirror [OPTIONS] ALIAS
+
+Positionals:
+  ALIAS TEXT REQUIRED         Alias of the repo name
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help

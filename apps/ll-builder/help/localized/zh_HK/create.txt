@@ -1,0 +1,9 @@
+Create linyaps build template project
+Usage: ll-builder create [OPTIONS] NAME
+
+Positionals:
+  NAME TEXT REQUIRED          Project name
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help

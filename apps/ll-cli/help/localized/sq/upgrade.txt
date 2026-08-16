@@ -1,0 +1,14 @@
+Përmirësoni aplikacionin ose “runtimes”
+Përdorimi: ll-cli upgrade [MUNDËSI] [APLIKACION]
+
+Positionals:
+  APP TEXT                    Specify the application ID. If it not be specified, all applications will be upgraded
+
+Options:
+  -h,--help                   Shtyp këtë mesazh ndihme dhe dil
+  --help-all                  Zgjero krejt ndihmën
+  --deps-only                 Only upgrade dependencies of application
+  --no-auto-prune             Do not automatically remove unused dependencies
+
+Nëse gjetët çfarëdo problemi gjatë përdorimit
+mund të njoftoni të meta te ekipi i linyaps-it te ky projekt: https://github.com/OpenAtom-Linyaps/linyaps/issues

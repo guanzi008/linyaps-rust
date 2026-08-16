@@ -1,0 +1,7 @@
+Clean build artifacts
+Usage: ll-builder clean
+
+Options:
+  -h,--help                   Imprimir este mensaje de ayuda y salir
+  --help-all                  Expandir toda la ayuda
+  -f,--file FILE:FILE         Ruta del archivo de linglong.yaml

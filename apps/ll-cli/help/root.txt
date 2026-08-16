@@ -1,0 +1,38 @@
+linyaps CLI
+A CLI program to run application and manage application and runtime
+
+Usage: ll-cli [OPTIONS] [SUBCOMMAND]
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help
+  --version                   Show version
+  --json                      Use json format to output result
+  -v,--verbose [0]            Show debug info; repeat to enable backtrace
+  --no-progress               Don't output progress information
+
+
+Managing running applications:
+  run                         Run an application
+  ps                          List running applications
+  enter                       Enter the namespace where the application is running
+  kill                        Stop running applications
+  prune                       Remove the unused base or runtime
+
+Managing installed applications and runtimes:
+  install                     Installing an application or runtime
+  uninstall                   Uninstall the application or runtimes
+  upgrade                     Upgrade the application or runtimes
+  list                        List installed application(s), base(s) or runtime(s)
+  analyze                     Analyze installed applications
+  info                        Display information about installed apps or runtimes
+  content                     Display the exported files of installed application
+
+Finding applications and runtimes:
+  search                      Search the applications/runtimes containing the specified text from the remote repository
+
+Managing remote repositories:
+  repo                        Display or modify information of the repository currently using
+
+If you found any problems during use,
+You can report bugs to the linyaps team under this project: https://github.com/OpenAtom-Linyaps/linyaps/issues

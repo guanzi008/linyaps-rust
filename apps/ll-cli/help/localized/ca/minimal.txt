@@ -1,0 +1,8 @@
+CLI de linyaps
+Un programa de línia d'ordres per executar aplicacions i gestionar l'aplicació i el temps d'execució
+
+Usage: [OPTIONS]
+
+Options:
+  -h,--help                   Print this help message and exit
+

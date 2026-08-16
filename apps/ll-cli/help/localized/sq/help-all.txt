@@ -1,0 +1,151 @@
+linyaps CLI
+Një program CLI për të xhiruar dhe administruar aplikacion dhe “runtime”
+
+Përdorimi: ll-cli [MUNDËSI] [NËNURDHRA]
+
+Options:
+  -h,--help                   Shtyp këtë mesazh ndihme dhe dil
+  --help-all                  Zgjero krejt ndihmën
+  --version                   Shfaq versionin
+  --json                      Përdor formatin json për të dhënë përfundimin
+  -v,--verbose [0]            Show debug info; repeat to enable backtrace
+  --no-progress               Don't output progress information
+
+
+Po përditësohen aplikacione që xhirojnë:
+run
+  Xhironi një aplikacion
+  Positionals:
+    APP TEXT REQUIRED           Jepni ID-në e aplikacionit
+    COMMAND TEXT ...            Ekzekutoni urdhra në një bankëprovë në funksionim
+  Options:
+    --file FILE ...             Kalojuni kartelë aplikacioneve që xhirojnë nën bankëprovë
+    --url URL ...               Kalojuni URL aplikacioneve që xhirojnë nën bankëprovë
+    --env ENV ...               Set environment variables for the application
+    --base REF                  Specify the base used by the application to run
+    --runtime REF               Specify the runtime used by the application to run
+    --workdir PATH              Specify the working directory where the application runs
+    --extensions REF ...        Specify extension(s) used by the application to run
+    --enable-xdp{false},--disable-xdp{true}
+                                Enable or disable xdg-desktop-portal related integration inside the sandbox
+    --enable-pipewire           Enable PipeWire socket mount inside the sandbox
+    --enable-atspi              Enable AT SPI socket mount inside the sandbox
+    --cdi-spec-dir TEXT [[/etc/linglong/cdi,/etc/cdi,/var/run/cdi]]  ...
+                                CDI spec directory
+    --device TEXT ...           Add CDI devices
+    --device-mode ENUM:value in {passthru->0} OR {0} ...
+                                Add device options
+    --instance NAME             Specify the container instance name for reuse or identification
+    --debug                     Run the application under gdbserver
+    --debug-listen ADDR [127.0.0.1:2345]  Needs: --debug
+                                Specify the gdbserver listen address
+    --debug-debuginfod URLS Needs: --debug
+                                Specify debuginfod urls for debugging
+    --debug-symbol-dir DIR Needs: --debug
+                                Specify the directory used by gdb to load debug symbols
+
+ps
+  Shfaq aplikacione që xhirojnë
+  Options:
+    --no-truncated              Do not truncate container IDs
+
+enter
+  Enter the namespace where the application is running
+  Positionals:
+    INSTANCE TEXT REQUIRED      Specifikoni instancën e xhirimit të aplikacionit (mund ta merrni përmes urdhrit ps)
+    COMMAND TEXT ...            Ekzekutoni urdhra në një bankëprovë në funksionim
+  Options:
+    --working-directory PATH:DIR
+                                Jepni drejtori pune
+
+kill
+  Ndal aplikacione që janë duke xhiruar
+  Positionals:
+    APP TEXT REQUIRED           Përcaktoni aplikacionin në xhirim e sipër
+  Options:
+    -s,--signal TEXT [SIGTERM]  Specifikoni sinjalin për t’u dërguar te aplikacioni
+
+prune
+  Hiq bazën ose runtime-n e papërdorur
+
+
+Po administrohen aplikacionesh të instaluar dhe “runtimes”:
+install
+  Po instalohet një aplikacione ose “runtime”
+  Positionals:
+    APP TEXT REQUIRED           Jepni ID-në e aplikacionit dhe mund të jetë edhe një kartelë .uab ose .layer
+  Options:
+    --module MODULE             Install a specify module
+    --repo REPO                 Install from a specific repo
+    --force                     Instaloje me detyrim aplikacionin
+    -y                          Përgjigju automatikisht po për krejt pyetjet
+    --no-auto-prune             Do not automatically remove unused dependencies
+
+uninstall
+  Çinstalo aplikacionin ose “runtimes”
+  Positionals:
+    APP TEXT REQUIRED           Specifikoni ID aplikacioni
+  Options:
+    --module MODULE             Uninstall a specify module
+    --force                     Force uninstall base or runtime
+    --no-auto-prune             Do not automatically remove unused dependencies
+
+upgrade
+  Përmirësoni aplikacionin ose “runtimes”
+  Positionals:
+    APP TEXT                    Specify the application ID. If it not be specified, all applications will be upgraded
+  Options:
+    --deps-only                 Only upgrade dependencies of application
+    --no-auto-prune             Do not automatically remove unused dependencies
+
+list
+  List installed application(s), base(s) or runtime(s)
+  Options:
+    --type TYPE [all]           Filter result with specify type. One of "runtime", "base", "app" or "all"
+    --upgradable                Show the list of latest version of the currently installed application(s), base(s) or runtime(s)
+
+analyze
+  Analyze installed applications
+  Po administrohen aplikacionesh të instaluar dhe “runtimes”:
+    size                        Show installed module sizes and repository real size
+    depends                     Display installed application dependency tree
+
+info
+  Shfaq hollësi rreth aplikacionesh të instaluar ose runtime-sh
+  Positionals:
+    APP TEXT REQUIRED           Specifikoni ID-në e aplikacionit dhe mund të jetë një kartelë .layer
+
+content
+  Shfaq kartelat e eksportuara të aplikacionit të instaluar
+  Positionals:
+    APP TEXT REQUIRED           Specifikoni ID aplikacioni të instaluar
+
+
+Po gjenden aplikacione dhe “runtimes”:
+search
+  Search the applications/runtimes containing the specified text from the remote repository
+  Positionals:
+    KEYWORDS TEXT REQUIRED      Jepni Fjalëkyçet
+  Options:
+    --type TYPE [all]           Filter result with specify type. One of "runtime", "base", "app" or "all"
+    --repo REPO                 Specify the repo
+    --dev                       Include develop application in result
+    --show-all-version          Show all versions of an application(s), base(s) or runtime(s)
+
+
+Po administrohen depo të largëta:
+repo
+  Shfaqni ose ndryshoni hollësi të depos aktualisht në përdorim
+  Po administrohen depo të largëta:
+    add                         Shtoni depo të re
+    remove                      Hiqni një depo
+    update                      Përditësoni URL-në e depos
+    set-default                 Caktoni një emër depoje parazgjedhje
+    show                        Shfaq hollësi depoje
+    set-priority                Caktoni përparësinë e depos
+    enable-mirror               Enable mirror for the repo
+    disable-mirror              Disable mirror for the repo
+
+
+Nëse gjetët çfarëdo problemi gjatë përdorimit
+mund të njoftoni të meta te ekipi i linyaps-it te ky projekt: https://github.com/OpenAtom-Linyaps/linyaps/issues

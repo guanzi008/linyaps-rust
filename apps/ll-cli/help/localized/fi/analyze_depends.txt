@@ -1,0 +1,19 @@
+Display installed application dependency tree
+Usage: ll-cli analyze depends [APP]
+
+Example:
+# show dependency tree for all installed application(s)
+ll-cli analyze depends
+# show dependency tree for an installed application
+ll-cli analyze depends org.deepin.demo
+
+
+Positionals:
+  APP TEXT                    Määritä sovelluksen id-tunnus
+
+Options:
+  -h,--help                   Tulosta tämä ohje ja poistu
+  --help-all                  Kaikki ohjeet
+
+Jos havaitset ongelmia käytön aikana,
+Voit ilmoittaa vioista linyaps-tiimille täällä: https://github.com/OpenAtom-Linyaps/linyaps/issues

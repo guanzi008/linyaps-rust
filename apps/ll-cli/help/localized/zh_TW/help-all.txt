@@ -1,0 +1,151 @@
+linyaps 命令列介面
+一個用來執行應用程式並管理應用程式與執行時環境的命令列工具
+
+用法：ll-cli [選項] [子命令]
+
+Options:
+  -h,--help                   顯示此說明訊息並離開
+  --help-all                  展開所有說明
+  --version                   顯示版本
+  --json                      使用 JSON 格式輸出結果
+  -v,--verbose [0]            Show debug info; repeat to enable backtrace
+  --no-progress               不輸出進度資訊
+
+
+管理執行中的應用程式:
+run
+  執行應用程式
+  Positionals:
+    APP TEXT REQUIRED           指定應用程式 ID
+    COMMAND TEXT ...            在執行中的沙盒內執行命令
+  Options:
+    --file FILE ...             將檔案傳遞給在沙盒中執行的應用程式
+    --url URL ...               將 URL 傳遞給在沙盒中執行的應用程式
+    --env ENV ...               為應用程式設定環境變數
+    --base REF                  指定應用程式執行所需的基礎環境（Base）
+    --runtime REF               指定應用程式執行所需的執行時環境（Runtime）
+    --workdir PATH              指定應用程式執行的工作目錄
+    --extensions REF ...        指定應用程式執行所需的擴充功能
+    --enable-xdp{false},--disable-xdp{true}
+                                啟用或停用沙盒內與 xdg-desktop-portal 相關的整合
+    --enable-pipewire           Enable PipeWire socket mount inside the sandbox
+    --enable-atspi              Enable AT SPI socket mount inside the sandbox
+    --cdi-spec-dir TEXT [[/etc/linglong/cdi,/etc/cdi,/var/run/cdi]]  ...
+                                CDI 規格（spec）目錄
+    --device TEXT ...           新增 CDI 裝置
+    --device-mode ENUM:value in {passthru->0} OR {0} ...
+                                新增裝置選項
+    --instance NAME             指定容器實例名稱以用於重複使用或識別
+    --debug                     Run the application under gdbserver
+    --debug-listen ADDR [127.0.0.1:2345]  Needs: --debug
+                                Specify the gdbserver listen address
+    --debug-debuginfod URLS Needs: --debug
+                                Specify debuginfod urls for debugging
+    --debug-symbol-dir DIR Needs: --debug
+                                Specify the directory used by gdb to load debug symbols
+
+ps
+  列出正在執行的應用程式
+  Options:
+    --no-truncated              Do not truncate container IDs
+
+enter
+  進入應用程式執行中的命名空間（Namespace）
+  Positionals:
+    INSTANCE TEXT REQUIRED      指定應用程式的執行實例（可透過 ps 命令獲取）
+    COMMAND TEXT ...            在執行中的沙盒內執行命令
+  Options:
+    --working-directory PATH:DIR
+                                指定工作目錄
+
+kill
+  停止執行的應用程式
+  Positionals:
+    APP TEXT REQUIRED           指定執行中的應用程式
+  Options:
+    -s,--signal TEXT [SIGTERM]  指定要發送給應用程式的訊號（Signal）
+
+prune
+  移除未使用的基礎環境或執行時環境
+
+
+管理已安裝的應用程式與執行時環境:
+install
+  安裝應用程式或執行時環境（Runtime）
+  Positionals:
+    APP TEXT REQUIRED           指定應用程式 ID，也可以是 .uab 或 .layer 檔案
+  Options:
+    --module MODULE             安裝指定模組
+    --repo REPO                 從特定的軟體庫安裝
+    --force                     強制安裝應用程式
+    -y                          對所有提問自動回答 yes
+    --no-auto-prune             Do not automatically remove unused dependencies
+
+uninstall
+  解除安裝應用程式或執行時環境（Runtime）
+  Positionals:
+    APP TEXT REQUIRED           指定應用程式 ID
+  Options:
+    --module MODULE             解除安裝指定模組
+    --force                     強制解除安裝基礎環境（Base）或執行時環境（Runtime）
+    --no-auto-prune             Do not automatically remove unused dependencies
+
+upgrade
+  升級應用程式或執行時環境（Runtime）
+  Positionals:
+    APP TEXT                    指定應用程式 ID。如果未指定，將升級所有應用程式
+  Options:
+    --deps-only                 僅升級應用程式的相依項目
+    --no-auto-prune             Do not automatically remove unused dependencies
+
+list
+  列出已安裝的應用程式、基礎環境或執行時環境
+  Options:
+    --type TYPE [all]           使用指定類型過濾結果。可為 "runtime"、"base"、"app" 或 "all" 其中之一
+    --upgradable                顯示目前已安裝的應用程式、基礎環境或執行時環境的最新版本列表
+
+analyze
+  Analyze installed applications
+  管理已安裝的應用程式與執行時環境:
+    size                        Show installed module sizes and repository real size
+    depends                     Display installed application dependency tree
+
+info
+  顯示已安裝應用程式或執行時環境的資訊
+  Positionals:
+    APP TEXT REQUIRED           指定應用程式 ID，也可以是 .layer 檔案
+
+content
+  顯示已安裝應用程式的匯出檔案
+  Positionals:
+    APP TEXT REQUIRED           指定已安裝的應用程式 ID
+
+
+尋找應用程式與執行時環境:
+search
+  從遠端軟體庫中搜尋包含指定文字的應用程式/執行時環境
+  Positionals:
+    KEYWORDS TEXT REQUIRED      指定關鍵字
+  Options:
+    --type TYPE [all]           使用指定類型過濾結果。可為 "runtime"、"base"、"app" 或 "all" 其中之一
+    --repo REPO                 指定軟體庫
+    --dev                       結果中包含開發版（develop）應用程式
+    --show-all-version          顯示應用程式、基礎環境或執行時環境的所有版本
+
+
+管理遠端軟體庫:
+repo
+  顯示或修改目前正在使用的軟體庫資訊
+  管理遠端軟體庫:
+    add                         新增一個軟體庫
+    remove                      移除一個軟體庫
+    update                      更新軟體庫 URL
+    set-default                 設定預設軟體庫名稱
+    show                        顯示軟體庫資訊
+    set-priority                設定軟體庫的優先級
+    enable-mirror               啟用該軟體庫的鏡像（Mirror）
+    disable-mirror              停用該軟體庫的鏡像（Mirror）
+
+
+如果您在使用過程中遇到任何問題，
+可以在此專案下向 linyaps 團隊回報錯誤：https://github.com/OpenAtom-Linyaps/linyaps/issues

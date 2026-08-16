@@ -1,0 +1,10 @@
+Extract linyaps layer to dir
+Usage: ll-builder extract [OPTIONS] LAYER DIR
+
+Positionals:
+  LAYER TEXT:FILE REQUIRED    Layer file path
+  DIR DIR REQUIRED            Destination directory
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help

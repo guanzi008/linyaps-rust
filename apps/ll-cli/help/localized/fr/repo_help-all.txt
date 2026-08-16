@@ -1,0 +1,54 @@
+Afficher ou modifier les informations du référentiel actuellement utilisé
+Usage: ll-cli repo SUBCOMMAND [OPTIONS]
+
+Options:
+  -h,--help                   Imprimer ce message d'aide et quitter
+  --help-all                  Développer toute l'aide
+
+Gérer les répertoires distants:
+add
+  Ajouter un nouveau répertoire
+  Positionals:
+    NAME TEXT REQUIRED          Spécifie le nom du répertoire
+    URL TEXT REQUIRED           L'adresse du répertoire
+  Options:
+    --alias ALIAS               Alias du nom du dépôt
+
+remove
+  Supprimer un répertoire
+  Positionals:
+    ALIAS TEXT REQUIRED         Alias du nom du dépôt
+
+update
+  Mettre à jour l'adresse du répertoire
+  Positionals:
+    ALIAS TEXT REQUIRED         Alias du nom du dépôt
+    URL TEXT REQUIRED           L'adresse du répertoire
+
+set-default
+  Définir un nom de référentiel par défaut
+  Positionals:
+    ALIAS TEXT REQUIRED         Alias du nom du dépôt
+
+show
+  Afficher les informations sur le répertoire
+
+set-priority
+  Définir la priorité du dépôt
+  Positionals:
+    ALIAS TEXT REQUIRED         Alias du nom du dépôt
+    PRIORITY INT REQUIRED       Propriété du dépôt
+
+enable-mirror
+  Activer le miroir pour le dépôt
+  Positionals:
+    ALIAS TEXT REQUIRED         Alias du nom du dépôt
+
+disable-mirror
+  Désactiver le miroir pour le dépôt
+  Positionals:
+    ALIAS TEXT REQUIRED         Alias du nom du dépôt
+
+
+Si vous avez rencontré des problèmes lors de l'utilisation,
+Vous pouvez signaler les bogues à l'équipe linyaps dans le cadre de ce projet : https://github.com/OpenAtom-Linyaps/linyaps/issues

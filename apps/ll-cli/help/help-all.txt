@@ -1,0 +1,151 @@
+linyaps CLI
+A CLI program to run application and manage application and runtime
+
+Usage: ll-cli [OPTIONS] [SUBCOMMAND]
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help
+  --version                   Show version
+  --json                      Use json format to output result
+  -v,--verbose [0]            Show debug info; repeat to enable backtrace
+  --no-progress               Don't output progress information
+
+
+Managing running applications:
+run
+  Run an application
+  Positionals:
+    APP TEXT REQUIRED           Specify the application ID
+    COMMAND TEXT ...            Run commands in a running sandbox
+  Options:
+    --file FILE ...             Pass file to applications running in a sandbox
+    --url URL ...               Pass url to applications running in a sandbox
+    --env ENV ...               Set environment variables for the application
+    --base REF                  Specify the base used by the application to run
+    --runtime REF               Specify the runtime used by the application to run
+    --workdir PATH              Specify the working directory where the application runs
+    --extensions REF ...        Specify extension(s) used by the application to run
+    --enable-xdp{false},--disable-xdp{true}
+                                Enable or disable xdg-desktop-portal related integration inside the sandbox
+    --enable-pipewire           Enable PipeWire socket mount inside the sandbox
+    --enable-atspi              Enable AT SPI socket mount inside the sandbox
+    --cdi-spec-dir TEXT [[/etc/linglong/cdi,/etc/cdi,/var/run/cdi]]  ...
+                                CDI spec directory
+    --device TEXT ...           Add CDI devices
+    --device-mode ENUM:value in {passthru->0} OR {0} ...
+                                Add device options
+    --instance NAME             Specify the container instance name for reuse or identification
+    --debug                     Run the application under gdbserver
+    --debug-listen ADDR [127.0.0.1:2345]  Needs: --debug
+                                Specify the gdbserver listen address
+    --debug-debuginfod URLS Needs: --debug
+                                Specify debuginfod urls for debugging
+    --debug-symbol-dir DIR Needs: --debug
+                                Specify the directory used by gdb to load debug symbols
+
+ps
+  List running applications
+  Options:
+    --no-truncated              Do not truncate container IDs
+
+enter
+  Enter the namespace where the application is running
+  Positionals:
+    INSTANCE TEXT REQUIRED      Specify the application running instance(you can get it by ps command)
+    COMMAND TEXT ...            Run commands in a running sandbox
+  Options:
+    --working-directory PATH:DIR
+                                Specify working directory
+
+kill
+  Stop running applications
+  Positionals:
+    APP TEXT REQUIRED           Specify the running application
+  Options:
+    -s,--signal TEXT [SIGTERM]  Specify the signal to send to the application
+
+prune
+  Remove the unused base or runtime
+
+
+Managing installed applications and runtimes:
+install
+  Installing an application or runtime
+  Positionals:
+    APP TEXT REQUIRED           Specify the application ID, and it can also be a .uab or .layer file
+  Options:
+    --module MODULE             Install a specify module
+    --repo REPO                 Install from a specific repo
+    --force                     Force install the application
+    -y                          Automatically answer yes to all questions
+    --no-auto-prune             Do not automatically remove unused dependencies
+
+uninstall
+  Uninstall the application or runtimes
+  Positionals:
+    APP TEXT REQUIRED           Specify the applications ID
+  Options:
+    --module MODULE             Uninstall a specify module
+    --force                     Force uninstall base or runtime
+    --no-auto-prune             Do not automatically remove unused dependencies
+
+upgrade
+  Upgrade the application or runtimes
+  Positionals:
+    APP TEXT                    Specify the application ID. If it not be specified, all applications will be upgraded
+  Options:
+    --deps-only                 Only upgrade dependencies of application
+    --no-auto-prune             Do not automatically remove unused dependencies
+
+list
+  List installed application(s), base(s) or runtime(s)
+  Options:
+    --type TYPE [all]           Filter result with specify type. One of "runtime", "base", "app" or "all"
+    --upgradable                Show the list of latest version of the currently installed application(s), base(s) or runtime(s)
+
+analyze
+  Analyze installed applications
+  Managing installed applications and runtimes:
+    size                        Show installed module sizes and repository real size
+    depends                     Display installed application dependency tree
+
+info
+  Display information about installed apps or runtimes
+  Positionals:
+    APP TEXT REQUIRED           Specify the application ID, and it can also be a .layer file
+
+content
+  Display the exported files of installed application
+  Positionals:
+    APP TEXT REQUIRED           Specify the installed application ID
+
+
+Finding applications and runtimes:
+search
+  Search the applications/runtimes containing the specified text from the remote repository
+  Positionals:
+    KEYWORDS TEXT REQUIRED      Specify the Keywords
+  Options:
+    --type TYPE [all]           Filter result with specify type. One of "runtime", "base", "app" or "all"
+    --repo REPO                 Specify the repo
+    --dev                       Include develop application in result
+    --show-all-version          Show all versions of an application(s), base(s) or runtime(s)
+
+
+Managing remote repositories:
+repo
+  Display or modify information of the repository currently using
+  Managing remote repositories:
+    add                         Add a new repository
+    remove                      Remove a repository
+    update                      Update the repository URL
+    set-default                 Set a default repository name
+    show                        Show repository information
+    set-priority                Set the priority of the repo
+    enable-mirror               Enable mirror for the repo
+    disable-mirror              Disable mirror for the repo
+
+
+If you found any problems during use,
+You can report bugs to the linyaps team under this project: https://github.com/OpenAtom-Linyaps/linyaps/issues

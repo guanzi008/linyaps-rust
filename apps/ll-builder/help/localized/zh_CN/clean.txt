@@ -1,0 +1,7 @@
+Clean build artifacts
+Usage: ll-builder clean
+
+Options:
+  -h,--help                   打印帮助信息并退出
+  --help-all                  展开所有帮助
+  -f,--file FILE:FILE         linglong.yaml的文件路径

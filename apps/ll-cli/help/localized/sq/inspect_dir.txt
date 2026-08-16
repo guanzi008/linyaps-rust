@@ -1,0 +1,14 @@
+Display the data(bundle) directory of the installed(running) application
+Usage: ll-cli inspect dir [OPTIONS] APP
+
+Positionals:
+  APP TEXT REQUIRED           Specify the application ID, and it can also be reference
+
+Options:
+  -h,--help                   Shtyp këtë mesazh ndihme dhe dil
+  --help-all                  Zgjero krejt ndihmën
+  -t,--type TYPE [layer]      Specify the directory type (layer or bundle),the default is layer
+  -m,--module TEXT            Specify the module type (binary or develop). Only works when type is layer
+
+Nëse gjetët çfarëdo problemi gjatë përdorimit
+mund të njoftoni të meta te ekipi i linyaps-it te ky projekt: https://github.com/OpenAtom-Linyaps/linyaps/issues

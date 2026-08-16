@@ -1,0 +1,17 @@
+Show installed module sizes and repository real size
+Usage: ll-cli analyze size [OPTIONS]
+
+Example:
+# show installed module sizes
+ll-cli analyze size
+
+
+Options:
+  -h,--help                   Exibir esta mensagem de ajuda e sair
+  --help-all                  Expandir toda a ajuda
+  --sort FIELD:{actual,logical,exclusive,shared,id} [actual] 
+                              Sort result by specify field. One of "actual", "logical", "exclusive", "shared" or "id"
+  --asc                       Sort in ascending order
+
+Se encontrar qualquer problema durante o uso,
+Você pode reportar erros para o time linyaps sob este projeto: https://github.com/OpenAtom-Linyaps/linyaps/issues

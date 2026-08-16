@@ -1,0 +1,10 @@
+Update the repository URL
+Usage: ll-builder repo update [OPTIONS] NAME URL
+
+Positionals:
+  ALIAS TEXT REQUIRED         Alias of the repo name
+  URL TEXT REQUIRED           Url of the repository
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help

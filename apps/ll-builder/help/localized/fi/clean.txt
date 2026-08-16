@@ -1,0 +1,7 @@
+Clean build artifacts
+Usage: ll-builder clean
+
+Options:
+  -h,--help                   Tulosta tämä ohje ja poistu
+  --help-all                  Kaikki ohjeet
+  -f,--file FILE:FILE         Tiedoston linglong.yaml tiedostopolku

@@ -1,0 +1,42 @@
+[package]
+name = "ll-builder"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Linyaps application builder"
+
+[[bin]]
+name = "ll-builder"
+path = "src/main.rs"
+
+[[bin]]
+name = "ll-builder-export"
+path = "src/bin/ll-builder-export.rs"
+
+[dependencies]
+anyhow.workspace = true
+bzip2.workspace = true
+clap.workspace = true
+flate2.workspace = true
+gix.workspace = true
+goblin.workspace = true
+libc.workspace = true
+linyaps-api.workspace = true
+linyaps-core.workspace = true
+linyaps-i18n.workspace = true
+linyaps-repository.workspace = true
+lzma-rs.workspace = true
+md-5.workspace = true
+patchkit.workspace = true
+reqwest.workspace = true
+ruzstd.workspace = true
+serde_json.workspace = true
+serde_yml.workspace = true
+sha2.workspace = true
+sha1.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+hex = "0.4.3"
+tempfile = "3.27.0"

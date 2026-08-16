@@ -1,0 +1,20 @@
+Export to linyaps layer or uab
+Usage: ll-builder export [OPTIONS]
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help
+  -f,--file FILE:FILE         File path of the linglong.yaml
+  -z,--compressor X           supported compressors are: lz4(default), lzma, zstd
+  --icon FILE:FILE Excludes: --layer
+                              Uab icon (optional)
+  --layer Excludes: --icon --loader --output --ref --modules
+                              Export to linyaps layer file (deprecated)
+  --loader FILE:FILE Excludes: --layer
+                              Use custom loader
+  --no-develop Needs: --layer Don't export the develop module
+  -o,--output FILE Excludes: --layer
+                              Output file
+  --ref REF Excludes: --layer Reference of the package
+  --modules MODULES ... Excludes: --layer
+                              Modules to export

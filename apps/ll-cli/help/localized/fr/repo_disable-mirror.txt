@@ -1,0 +1,12 @@
+Désactiver le miroir pour le dépôt
+Usage: ll-cli repo disable-mirror [OPTIONS] ALIAS
+
+Positionals:
+  ALIAS TEXT REQUIRED         Alias du nom du dépôt
+
+Options:
+  -h,--help                   Imprimer ce message d'aide et quitter
+  --help-all                  Développer toute l'aide
+
+Si vous avez rencontré des problèmes lors de l'utilisation,
+Vous pouvez signaler les bogues à l'équipe linyaps dans le cadre de ce projet : https://github.com/OpenAtom-Linyaps/linyaps/issues

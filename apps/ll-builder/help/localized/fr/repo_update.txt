@@ -1,0 +1,10 @@
+Mettre à jour l'adresse du répertoire
+Usage: ll-builder repo update [OPTIONS] NAME URL
+
+Positionals:
+  ALIAS TEXT REQUIRED         Alias du nom du dépôt
+  URL TEXT REQUIRED           L'adresse du répertoire
+
+Options:
+  -h,--help                   Imprimer ce message d'aide et quitter
+  --help-all                  Développer toute l'aide

@@ -1,0 +1,8 @@
+linyaps CLI
+Программа командной строки для запуска приложений и управления приложениями и средами выполнения
+
+Usage: [OPTIONS]
+
+Options:
+  -h,--help                   Print this help message and exit
+

@@ -1,0 +1,10 @@
+Push linyaps app to remote repo
+Usage: ll-builder push [OPTIONS]
+
+Options:
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help
+  -f,--file FILE:FILE         File path of the linglong.yaml
+  --repo-url URL              Remote repo url
+  --repo-name NAME            Remote repo name
+  --module TEXT               Push single module

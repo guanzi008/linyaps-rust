@@ -1,0 +1,10 @@
+Définir la priorité du dépôt
+Usage: ll-builder repo set-priority ALIAS PRIORITY
+
+Positionals:
+  ALIAS TEXT REQUIRED         Alias du nom du dépôt
+  PRIORITY INT REQUIRED       Propriété du dépôt
+
+Options:
+  -h,--help                   Imprimer ce message d'aide et quitter
+  --help-all                  Développer toute l'aide

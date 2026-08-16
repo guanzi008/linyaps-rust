@@ -1,0 +1,30 @@
+[package]
+name = "linyaps-uab"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Linyaps universal application bundle tools"
+
+[[bin]]
+name = "uab-header"
+path = "src/header.rs"
+
+[[bin]]
+name = "uab-loader"
+path = "src/loader.rs"
+
+[dependencies]
+fs-core.workspace = true
+fs-erofs.workspace = true
+fuser.workspace = true
+libc.workspace = true
+linyaps-api.workspace = true
+linyaps-core.workspace = true
+linyaps-repository.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+tempfile = "3.27.0"
