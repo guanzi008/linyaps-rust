@@ -36,9 +36,13 @@ jobs:
           set -euo pipefail
           cargo +1.92.0 build -p ll-init --release --locked --target x86_64-unknown-linux-musl
           init=target/x86_64-unknown-linux-musl/release/ll-init
-          file "$init" | grep -q 'statically linked'
+          file "$init"
           if readelf -l "$init" | grep -q 'INTERP\|Requesting program interpreter'; then
             echo "ll-init must not contain a dynamic interpreter" >&2
+            exit 1
+          fi
+          if readelf -d "$init" 2>/dev/null | grep -q '(NEEDED)'; then
+            echo "ll-init must not contain dynamic library dependencies" >&2
             exit 1
           fi
           cp "$init" target/release/ll-init
