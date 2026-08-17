@@ -59,6 +59,7 @@ if [[ -z "$workspace_version" ]]; then
 fi
 
 deb_version=${DEB_VERSION:-${workspace_version}~rust1-1}
+artifact_version=${deb_version//\~/.}
 deb_arch=${DEB_ARCH:-$(detect_architecture)}
 native_arch=$(detect_architecture)
 output_dir=${OUTPUT_DIR:-$project_root/dist}
@@ -354,8 +355,8 @@ find "$runtime_root" "$builder_root" -print0 \
     | xargs -0 touch --no-dereference --date="@$source_date_epoch"
 
 mkdir -p "$output_dir"
-runtime_artifact=$output_dir/linglong-bin_${deb_version}_${deb_arch}.deb
-builder_artifact=$output_dir/linglong-builder_${deb_version}_${deb_arch}.deb
+runtime_artifact=$output_dir/linglong-bin_${artifact_version}_${deb_arch}.deb
+builder_artifact=$output_dir/linglong-builder_${artifact_version}_${deb_arch}.deb
 
 dpkg-deb --root-owner-group --uniform-compression -Zxz -z9 \
     --build "$runtime_root" "$runtime_artifact"
