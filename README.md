@@ -48,4 +48,19 @@ target/release/ll-system-helper install \
   --ll-box ../linyaps-box-rust/target/release/ll-box
 ```
 
+## Debian 包
+
+在 Debian/Ubuntu 构建机上安装 `dpkg-dev`、`binutils`、`musl-tools` 和
+Rust musl 目标后执行：
+
+```sh
+rustup target add x86_64-unknown-linux-musl
+./packaging/debian/build-debs.sh
+```
+
+为保持上游包边界，会生成 `linglong-bin` 和 `linglong-builder` 两个包及
+`dist/SHA256SUMS`。`linglong-builder` 是可选的开发工具包；运行应用只需
+`linglong-bin` 与配套仓库发布的 `linglong-box`。可使用
+`DEB_VERSION`、`DEB_ARCH`、`OUTPUT_DIR` 和 `SOURCE_DATE_EPOCH` 覆盖默认元数据。
+
 许可证为 `LGPL-3.0-or-later`；随仓库保留了冻结上游的完整 REUSE 许可证集合。

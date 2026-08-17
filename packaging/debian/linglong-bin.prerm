@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+if [ -z "${DPKG_ROOT:-}" ] && [ "$1" = remove ] && [ -d /run/systemd/system ]; then
+    if command -v deb-systemd-invoke >/dev/null 2>&1; then
+        deb-systemd-invoke stop org.deepin.linglong.PackageManager.service >/dev/null || true
+    fi
+fi
+
+exit 0

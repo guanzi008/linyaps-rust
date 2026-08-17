@@ -254,8 +254,9 @@ fn install_locale_catalogs(destdir: &Path, prefix: &Path) -> Result<()> {
 
 fn install_xdg_shell_integration(destdir: &Path, prefix: &Path) -> Result<()> {
     let helper = shell_quote(&prefix.join("libexec/linglong/ll-system-helper"));
-    let generator =
-        format!("if [ -x {helper} ]; then\n    XDG_DATA_DIRS=\"$({helper} xdg-value)\"\nfi\n");
+    let generator = format!(
+        "#!/bin/sh\nif [ -x {helper} ]; then\n    XDG_DATA_DIRS=\"$({helper} xdg-value)\"\nfi\n"
+    );
     let generator_path = prefix.join("lib/linglong/generate-xdg-data-dirs.sh");
     write_file(
         &destination(destdir, &generator_path)?,
@@ -403,6 +404,7 @@ mod tests {
                 .join("opt/linyaps/lib/linglong/generate-xdg-data-dirs.sh"),
         )
         .unwrap();
+        assert!(generator.starts_with("#!/bin/sh\n"));
         assert!(generator.contains("'/opt/linyaps/libexec/linglong/ll-system-helper' xdg-value"));
         let profile =
             fs::read_to_string(temporary.path().join("etc/profile.d/linglong.sh")).unwrap();
