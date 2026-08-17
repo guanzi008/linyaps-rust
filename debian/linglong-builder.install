@@ -1,0 +1,13 @@
+usr/bin/ll-builder
+usr/bin/ll-builder-export
+usr/lib/linglong/builder
+usr/libexec/linglong/app-conf-generator
+usr/libexec/linglong/builder
+usr/libexec/linglong/fetch-archive-source
+usr/libexec/linglong/fetch-dsc-source
+usr/libexec/linglong/fetch-file-source
+usr/libexec/linglong/fetch-git-source
+usr/share/bash-completion/completions/ll-builder
+usr/share/fish/vendor_completions.d/ll-builder.fish
+usr/share/linglong/builder
+usr/share/zsh/vendor-completions/_ll-builder
