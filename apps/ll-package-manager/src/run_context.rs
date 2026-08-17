@@ -180,7 +180,7 @@ fn layer_files(repository: &LocalRepository, reference: &Reference) -> Result<Pa
 fn container_id_for(config: &RunContextConfig) -> Result<String> {
     let mut hasher = Sha256::new();
     hasher.update(serde_json::to_vec(config)?);
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(linyaps_core::hex_encode(hasher.finalize()))
 }
 
 fn make_ld_conf(context: &ResolvedContext) -> Result<String> {
@@ -212,7 +212,8 @@ fn make_ld_conf(context: &ResolvedContext) -> Result<String> {
     for factor in factors {
         hasher.update(factor.as_bytes());
     }
-    Ok(format!("# {:x}\n{content}", hasher.finalize()))
+    let digest = linyaps_core::hex_encode(hasher.finalize());
+    Ok(format!("# {digest}\n{content}"))
 }
 
 fn append_ld_prefix(content: &mut String, prefix: &str, triplet: &str) {
@@ -485,7 +486,7 @@ mod tests {
             version: "1".to_string(),
         };
         let bytes = serde_json::to_vec(&config).unwrap();
-        let expected = format!("{:x}", Sha256::digest(bytes));
+        let expected = linyaps_core::hex_encode(Sha256::digest(bytes));
         assert_eq!(container_id_for(&config).unwrap(), expected);
     }
 

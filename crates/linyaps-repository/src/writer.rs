@@ -719,7 +719,7 @@ mod tests {
         )
         .unwrap();
         let bundle = build_erofs_image(&tree).unwrap();
-        let digest = format!("{:x}", Sha256::digest(&bundle));
+        let digest = linyaps_core::hex_encode(Sha256::digest(&bundle));
         let metadata = UabMetaInfo {
             digest,
             layers: vec![UabLayer {

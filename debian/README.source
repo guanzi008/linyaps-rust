@@ -6,16 +6,23 @@ Debian Cargo registry.  Cargo is configured by dh-rust to remain offline;
 network downloads during the package build are not supported.
 
 The feature-level Build-Depends list is the union of the direct external
-dependencies declared by the workspace crates and the two bundled crates.
+dependencies declared by the workspace crates and the active bundled crate.
 It is kept in debian/control because apt must resolve build dependencies
 before debian/rules can run.  dh-rust's X-Cargo-Crates mapping then assigns
 the application crates to the two binary packages.
 
-This upstream workspace contains private application crates and three bundled
-crate sources: am-fs-erofs, the patched gix-transport implementation, and the
-Linyaps workspace crates themselves.  Their licenses are recorded in
-debian/copyright.  All other Rust dependencies must be supplied by Debian
-librust-*-dev packages listed in debian/control.
+The dependency floors follow Debian sid as of 2026-08-17.  Trixie cannot be
+used without a substantially larger port because it has no fuser package and
+ships an older gix API.  The supplemental package repository is still needed
+for am-fs-core, oci-spec, ostrya, ostrya-core, rustls-rustcrypto and serde-yml,
+which are not currently packaged in Debian sid.
+
+This upstream workspace contains private application crates and the bundled
+am-fs-erofs crate.  The vendor/gix-transport directory is retained as an
+upstream source snapshot but is no longer selected by Cargo; gix now uses the
+transport supplied by its Debian package.  The bundled sources' licenses are
+recorded in debian/copyright.  External Rust dependencies must be supplied by
+the librust-*-dev packages listed in debian/control.
 
 The ll-init executable is intentionally rebuilt with crt-static after both the
 normal build and the test phase.  It runs as PID 1 inside an application

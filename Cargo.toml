@@ -32,8 +32,8 @@ async-lock = "3.4.2"
 clap = { version = "4.5.60", features = ["derive"] }
 flate2 = "1.1.9"
 futures-lite = "2.6.1"
-fuser = { version = "0.15.1", default-features = false, features = ["abi-7-31"] }
-gix = { version = "0.86.0", default-features = false, features = ["blocking-http-transport-reqwest-rust-tls", "basic", "comfort", "sha1", "worktree-mutation"] }
+fuser = { version = "0.17.0", default-features = false, features = ["abi-7-31"] }
+gix = { version = "0.83.0", default-features = false, features = ["blocking-http-transport-reqwest-rust-tls", "basic", "comfort", "sha1", "worktree-mutation"] }
 goblin = "0.10.3"
 libc = "0.2.177"
 linyaps-api = { path = "crates/linyaps-api" }
@@ -42,25 +42,25 @@ linyaps-dbus = { path = "crates/linyaps-dbus" }
 linyaps-i18n = { path = "crates/linyaps-i18n" }
 linyaps-repository = { path = "crates/linyaps-repository" }
 lzma-rs = "0.3.0"
-md-5 = "0.10.6"
+md-5 = "0.11.0"
 oci-spec = { version = "0.10.0", features = ["runtime"] }
 ostrya = { version = "0.0.1", default-features = false, features = ["tokio"] }
 ostrya-core = "0.0.1"
-patchkit = "0.3.8"
+patchkit = "0.3.3"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "multipart", "rustls-no-provider", "stream"] }
-ruzstd = "0.9.0"
+ruzstd = "0.8.3"
 rustls-rustcrypto = "0.0.2-alpha"
 rustix = { version = "1.1.4", default-features = false, features = ["fs", "process", "std"] }
 semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 serde_yml = "0.0.12"
-sha2 = "0.10.9"
-sha1 = "0.10.7"
+sha2 = "0.11.0"
+sha1 = "0.11.0"
 thiserror = "2.0.18"
 tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "time"] }
-zbus = { version = "5.19.0", default-features = false, features = ["blocking-api", "p2p", "tokio"] }
-zvariant = "5.14.0"
+zbus = { version = "5.18.0", default-features = false, features = ["blocking-api", "p2p", "tokio"] }
+zvariant = "5.13.1"
 wayland-client = "0.31.11"
 wayland-protocols = { version = "0.32.9", features = ["client", "staging"] }
 
@@ -68,6 +68,3 @@ wayland-protocols = { version = "0.32.9", features = ["client", "staging"] }
 lto = "thin"
 codegen-units = 1
 strip = true
-
-[patch.crates-io]
-gix-transport = { path = "vendor/gix-transport" }

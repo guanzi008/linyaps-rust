@@ -10,8 +10,7 @@ use anyhow::{Context, Result, bail};
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
 use md5::Md5;
-use patchkit::apply::ApplyOptions;
-use patchkit::apply_tree::{ApplyToTreeOptions, apply_to_tree};
+use patchkit::ContentPatch;
 use patchkit::quilt::{Series, SeriesEntry};
 use patchkit::unified::{PlainOrBinaryPatch, UnifiedPatch};
 use sha1::Sha1;
@@ -645,17 +644,51 @@ fn apply_parsed_patches(
     strip: u32,
     reverse: bool,
 ) -> Result<()> {
-    let options = ApplyToTreeOptions {
-        apply: ApplyOptions::default(),
-        strip,
-        reverse,
-        dry_run: false,
-        backup_suffix: None,
-        remove_empty_files: true,
-    };
-    let report = apply_to_tree(destination, patches, &options, None)?;
-    if !report.applied() {
-        bail!("Debian source patch did not apply cleanly");
+    // Debian sid's patchkit applies exact single-file patches. If an upstream
+    // patch needs offset or fuzz matching, extract() retries with dpkg-source.
+    for patch in patches {
+        let patch = if reverse {
+            patch.reverse()
+        } else {
+            patch.clone()
+        };
+        let original_path = patch_path(&patch.orig_name, strip)?;
+        let modified_path = patch_path(&patch.mod_name, strip)?;
+        let read_path = original_path
+            .as_ref()
+            .or(modified_path.as_ref())
+            .context("Debian source patch names /dev/null on both sides")?;
+        let source = destination.join(read_path);
+        let original = match fs::read(&source) {
+            Ok(content) => content,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound && original_path.is_none() =>
+            {
+                Vec::new()
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let patched = patch
+            .apply_exact(&original)
+            .with_context(|| format!("failed to apply patch to {}", read_path.display()))?;
+        let Some(write_path) = modified_path else {
+            fs::remove_file(source)?;
+            continue;
+        };
+        if patched.is_empty() {
+            if original_path.is_some() {
+                fs::remove_file(source)?;
+            }
+            continue;
+        }
+        let target = destination.join(write_path);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&target, patched)?;
+        if original_path.is_some() && target != source {
+            fs::remove_file(source)?;
+        }
     }
     Ok(())
 }
@@ -914,7 +947,7 @@ mod tests {
         let temporary = tempfile::tempdir().unwrap();
         let archive_name = "example_1.0.tar";
         let archive = tar(&[("example-1.0/file.txt", b"source\n")]);
-        let digest = format!("{:x}", Sha256::digest(&archive));
+        let digest = linyaps_core::hex_encode(Sha256::digest(&archive));
         fs::write(temporary.path().join(archive_name), &archive).unwrap();
         let descriptor = temporary.path().join("example_1.0.dsc");
         fs::write(
@@ -944,7 +977,7 @@ mod tests {
         let temporary = tempfile::tempdir().unwrap();
         let archive_name = "example_1.0.orig.tar";
         let archive = tar(&[("example-1.0/legacy.txt", b"legacy\n")]);
-        let digest = format!("{:x}", Md5::digest(&archive));
+        let digest = linyaps_core::hex_encode(Md5::digest(&archive));
         fs::write(temporary.path().join(archive_name), &archive).unwrap();
         let descriptor = temporary.path().join("example_1.0.dsc");
         fs::write(

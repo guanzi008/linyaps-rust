@@ -76,10 +76,10 @@ features = ["rust_backend"]
 default-features = false
 
 [dependencies.lru]
-version = "0.12"
+version = "0.16"
 
 [dependencies.lz4_flex]
-version = "0.11"
+version = "0.13"
 features = [
     "safe-decode",
     "safe-encode",
@@ -90,13 +90,13 @@ default-features = false
 version = "0.3"
 
 [dependencies.ruzstd]
-version = "0.9"
+version = "0.8.3"
 
 [dev-dependencies.assert_cmd]
 version = "2"
 
 [dev-dependencies.lz4_flex]
-version = "0.11"
+version = "0.13"
 features = ["safe-encode"]
 
 [dev-dependencies.tempfile]

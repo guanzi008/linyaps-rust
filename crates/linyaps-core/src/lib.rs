@@ -14,6 +14,17 @@ pub mod version;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const VERSION_FULL: &str = concat!(env!("CARGO_PKG_VERSION"), "-dev");
 
+pub fn hex_encode(bytes: impl AsRef<[u8]>) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let bytes = bytes.as_ref();
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        encoded.push(DIGITS[usize::from(byte >> 4)] as char);
+        encoded.push(DIGITS[usize::from(byte & 0x0f)] as char);
+    }
+    encoded
+}
+
 pub use architecture::Architecture;
 pub use json_patch::apply_json_patch;
 pub use oci_patch::apply_oci_configuration_patches;

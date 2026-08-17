@@ -134,7 +134,7 @@ fn digest_section(file: &File, section: &UabSection) -> Result<String, UabError>
         offset += length as u64;
         remaining -= length as u64;
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(linyaps_core::hex_encode(hasher.finalize()))
 }
 
 #[derive(Clone, Copy)]
@@ -341,7 +341,7 @@ mod tests {
     #[test]
     fn reads_metadata_and_verifies_bundle_digest() {
         let bundle = b"bundle payload";
-        let digest = format!("{:x}", Sha256::digest(bundle));
+        let digest = linyaps_core::hex_encode(Sha256::digest(bundle));
         let metadata = UabMetaInfo {
             digest,
             layers: vec![UabLayer {

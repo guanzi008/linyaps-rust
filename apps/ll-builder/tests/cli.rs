@@ -283,7 +283,7 @@ fn legacy_helpers_dispatch_by_installed_file_name() {
     symlink(env!("CARGO_BIN_EXE_ll-builder"), &fetch).unwrap();
     let source = temporary.path().join("source");
     fs::write(&source, b"legacy helper payload").unwrap();
-    let digest = format!("{:x}", Sha256::digest(b"legacy helper payload"));
+    let digest = linyaps_core::hex_encode(Sha256::digest(b"legacy helper payload"));
     let output = temporary.path().join("output");
     let result = Command::new(&fetch)
         .arg(&output)
