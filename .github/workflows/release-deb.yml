@@ -66,7 +66,7 @@ jobs:
             exit 1
           fi
           test ! -e "$runtime_root/usr/bin/ll-box"
-          sha256sum --check dist/SHA256SUMS
+          (cd dist && sha256sum --check SHA256SUMS)
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
