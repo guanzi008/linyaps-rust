@@ -663,13 +663,10 @@ fn parse_install(arguments: &[String], cli: &mut Cli) -> Result<Command, ParseEr
             continue;
         }
         match name {
-            _ if separated => {
-                if install.app.is_empty() {
-                    install.app = valid_positional("APP", token.clone())?;
-                } else {
-                    return Err(unexpected(token));
-                }
+            _ if separated && install.app.is_empty() => {
+                install.app = valid_positional("APP", token.clone())?;
             }
+            _ if separated => return Err(unexpected(token)),
             "--force" => install.force = parse_bool_flag(name, attached)?,
             "--no-auto-prune" => install.no_auto_prune = parse_bool_flag(name, attached)?,
             _ if token.starts_with('-') && !token.starts_with("--") => {
@@ -731,13 +728,10 @@ fn parse_uninstall(arguments: &[String], cli: &mut Cli) -> Result<Command, Parse
             continue;
         }
         match name {
-            _ if separated => {
-                if value.app.is_empty() {
-                    value.app = valid_positional("APP", token.clone())?;
-                } else {
-                    return Err(unexpected(token));
-                }
+            _ if separated && value.app.is_empty() => {
+                value.app = valid_positional("APP", token.clone())?;
             }
+            _ if separated => return Err(unexpected(token)),
             "--force" => value.force = parse_bool_flag(name, attached)?,
             "--no-auto-prune" => value.no_auto_prune = parse_bool_flag(name, attached)?,
             "--prune" => value.prune = true,
@@ -824,13 +818,10 @@ fn parse_search(arguments: &[String], cli: &mut Cli) -> Result<Command, ParseErr
             continue;
         }
         match name {
-            _ if separated => {
-                if value.keywords.is_empty() {
-                    value.keywords = valid_positional("KEYWORDS", token.clone())?;
-                } else {
-                    return Err(unexpected(token));
-                }
+            _ if separated && value.keywords.is_empty() => {
+                value.keywords = valid_positional("KEYWORDS", token.clone())?;
             }
+            _ if separated => return Err(unexpected(token)),
             "--dev" => value.dev = parse_bool_flag(name, attached)?,
             "--show-all-version" => value.show_all_version = parse_bool_flag(name, attached)?,
             _ if token.starts_with('-') => return Err(unexpected_option(token)),

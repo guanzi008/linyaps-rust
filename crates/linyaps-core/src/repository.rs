@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::fs;
 use std::path::Path;
 
@@ -98,7 +99,7 @@ pub fn maximum_priority(config: &RepoConfigV2) -> Result<i64, RepositoryConfigEr
 
 pub fn priority_sorted_repos(config: &RepoConfigV2) -> Vec<Repo> {
     let mut repos = config.repos.clone();
-    repos.sort_by(|left, right| right.priority.cmp(&left.priority));
+    repos.sort_by_key(|repo| Reverse(repo.priority));
     repos
 }
 

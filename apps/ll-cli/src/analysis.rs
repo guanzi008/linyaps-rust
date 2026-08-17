@@ -369,7 +369,7 @@ async fn run_depends(app: Option<String>, json_output: bool) -> Result<(), Strin
             })
             .collect::<Vec<_>>()
     };
-    applications.sort_by(|left, right| left.0.to_string().cmp(&right.0.to_string()));
+    applications.sort_by_key(|application| application.0.to_string());
 
     let mut trees = Vec::new();
     for (app_reference, app_info) in applications {

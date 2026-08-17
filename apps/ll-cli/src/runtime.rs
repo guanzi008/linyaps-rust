@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::ffi::{CString, OsString};
 use std::fs::{self, File, OpenOptions};
 use std::io::{IsTerminal, Read, Seek, SeekFrom};
-use std::os::unix::ffi::OsStringExt;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::symlink;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 use std::thread;
@@ -61,23 +61,49 @@ pub(super) async fn run(options: Run, no_dbus: bool) -> Result<(), String> {
         .join(&target_item.commit)
         .join(&container_id);
     let process_args = process_arguments(&options, &app_info)?;
-    let startup_lock = match acquire_startup_lock_or_reuse(&container_id, &process_args)? {
-        StartupLock::New(lock) => lock,
-        StartupLock::Reused(status) => {
-            return status
-                .success()
-                .then_some(())
-                .ok_or_else(|| format!("application exited with {status}"));
-        }
-    };
     let package_manager = package_manager_client(no_dbus).await?;
     package_manager
         .init_run_context(&run_context_json, &container_id)
         .await
         .map_err(format_package_manager_error)?;
     drop(package_manager);
+    if options.run_context.is_none() && !crate::namespace::has_effective_sys_admin()? {
+        let startup_lock = match acquire_startup_lock_or_reuse(&container_id, &process_args)? {
+            StartupLock::New(lock) => lock,
+            StartupLock::Reused(status) => {
+                return status
+                    .success()
+                    .then_some(())
+                    .ok_or_else(|| format!("application exited with {status}"));
+            }
+        };
+        let status = crate::namespace::run(&run_context_json);
+        let cleanup =
+            BundleCleanup::new(xdg_runtime_dir().join("linglong").join(&container_id)).finish();
+        drop(startup_lock);
+        let status = status?;
+        cleanup?;
+        return status
+            .success()
+            .then_some(())
+            .ok_or_else(|| format!("namespace child exited with {status}"));
+    }
+    let startup_lock = if crate::namespace::is_child() {
+        None
+    } else {
+        match acquire_startup_lock_or_reuse(&container_id, &process_args)? {
+            StartupLock::New(lock) => Some(lock),
+            StartupLock::Reused(status) => {
+                return status
+                    .success()
+                    .then_some(())
+                    .ok_or_else(|| format!("application exited with {status}"));
+            }
+        }
+    };
     let bundle = xdg_runtime_dir().join("linglong").join(&container_id);
     clear_path(&bundle).map_err(|error| error.to_string())?;
+    let bundle_cleanup = BundleCleanup::new(bundle.clone());
     let rootfs = bundle.join("rootfs");
     fs::create_dir_all(&rootfs).map_err(|error| error.to_string())?;
     let base_layer = repository
@@ -87,8 +113,14 @@ pub(super) async fn run(options: Run, no_dbus: bool) -> Result<(), String> {
     if !base_layer.is_dir() {
         return Err(format!("layer {} has no files directory", base_reference));
     }
-    overlay_tree(&base_layer, &rootfs).map_err(|error| error.to_string())?;
-    prepare_runtime_mount_points(&rootfs, &run_context).map_err(|error| error.to_string())?;
+    let overlay = run_context
+        .overlayfs
+        .as_deref()
+        .map(|mode| OverlayMount::mount(mode, &base_layer, &app_cache, &bundle))
+        .transpose()?;
+    if overlay.is_none() {
+        overlay_tree(&base_layer, &rootfs).map_err(|error| error.to_string())?;
+    }
 
     #[cfg(feature = "wayland-security-context")]
     let wayland_security = crate::wayland_security::WaylandSecurityContext::create(
@@ -141,7 +173,8 @@ pub(super) async fn run(options: Run, no_dbus: bool) -> Result<(), String> {
         .wait()
         .map_err(|error| format!("failed to wait for OCI runtime: {error}"));
     let _ = fs::remove_file(state_path);
-    let _ = clear_path(&bundle);
+    drop(overlay);
+    bundle_cleanup.finish()?;
     let status = status?;
     drop(startup_lock);
     status
@@ -262,7 +295,7 @@ fn resolve_requested_context(
         extensions: Some(extension_map),
         instance: options.instance.clone(),
         mounts: resolved_mounts(runtime_config),
-        overlayfs: Some(resolve_overlay_mode()?),
+        overlayfs: Some(resolve_overlay_mode(repository, &base)?),
         resolv_conf: resolve_resolv_conf()?,
         runtime: runtime.as_ref().map(ToString::to_string),
         timezone: resolve_timezone()?,
@@ -1169,7 +1202,7 @@ fn host_integration(
         bind_if_exists(&mut mounts, path, path, false);
     }
 
-    append_network_and_timezone_mounts(&mut mounts, bundle, run_context)?;
+    append_network_and_timezone_mounts(&mut mounts, run_context);
     append_minimal_user_group_mounts(&mut mounts, bundle)?;
 
     let home = std::env::var_os("HOME")
@@ -1293,28 +1326,9 @@ fn host_integration(
     })
 }
 
-fn append_network_and_timezone_mounts(
-    mounts: &mut Vec<Value>,
-    bundle: &Path,
-    run_context: &RunContextConfig,
-) -> Result<(), String> {
+fn append_network_and_timezone_mounts(mounts: &mut Vec<Value>, run_context: &RunContextConfig) {
     if let Some(source) = run_context.resolv_conf.as_deref().map(Path::new) {
-        let bundle_resolv = bundle.join("resolv.conf");
-        clear_path(&bundle_resolv).map_err(|error| error.to_string())?;
-        let target = Path::new("/run/host/rootfs").join(source.strip_prefix("/").unwrap_or(source));
-        symlink(&target, &bundle_resolv).map_err(|error| {
-            format!(
-                "failed to create {} -> {}: {error}",
-                bundle_resolv.display(),
-                target.display()
-            )
-        })?;
-        mounts.push(json!({
-            "destination": "/etc/resolv.conf",
-            "type": "bind",
-            "source": bundle_resolv,
-            "options": ["bind", "copy-symlink"]
-        }));
+        bind_if_exists(mounts, source, Path::new("/etc/resolv.conf"), true);
     }
     bind_if_exists(
         mounts,
@@ -1333,15 +1347,21 @@ fn append_network_and_timezone_mounts(
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/usr/share/zoneinfo"));
     bind_if_exists(mounts, &zoneinfo, Path::new("/usr/share/zoneinfo"), true);
-    if run_context.timezone.as_deref() == Some("") {
-        bind_if_exists(
+    match run_context.timezone.as_deref() {
+        Some("") => bind_if_exists(
             mounts,
             Path::new("/etc/localtime"),
             Path::new("/etc/localtime"),
             true,
-        );
+        ),
+        Some(timezone) => bind_if_exists(
+            mounts,
+            &zoneinfo.join(timezone),
+            Path::new("/etc/localtime"),
+            true,
+        ),
+        None => {}
     }
-    Ok(())
 }
 
 fn append_minimal_user_group_mounts(mounts: &mut Vec<Value>, bundle: &Path) -> Result<(), String> {
@@ -2126,74 +2146,6 @@ fn container_id(config: &RunContextConfig) -> Result<String, String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-fn prepare_runtime_mount_points(
-    rootfs: &Path,
-    context: &RunContextConfig,
-) -> Result<(), std::io::Error> {
-    for path in ["etc/localtime", "etc/resolv.conf"] {
-        clear_path(&rootfs.join(path))?;
-    }
-    if let Some(timezone) = context
-        .timezone
-        .as_deref()
-        .filter(|value| !value.is_empty())
-    {
-        let localtime = rootfs.join("etc/localtime");
-        if let Some(parent) = localtime.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        symlink(Path::new("/usr/share/zoneinfo").join(timezone), localtime)?;
-    }
-    if context.runtime.is_some() {
-        fs::create_dir_all(rootfs.join("runtime"))?;
-    }
-    if let Some(app) = context.app.as_deref()
-        && let Ok(reference) = app.parse::<Reference>()
-    {
-        fs::create_dir_all(rootfs.join("opt/apps").join(reference.id).join("files"))?;
-    }
-    for extension in context
-        .extensions
-        .iter()
-        .flat_map(|values| values.values())
-        .flatten()
-    {
-        if let Ok(reference) = extension.parse::<Reference>() {
-            fs::create_dir_all(rootfs.join("opt/extensions").join(reference.id))?;
-        }
-    }
-    for mount in context.mounts.as_deref().into_iter().flatten() {
-        let destination =
-            rootfs_path(rootfs, Path::new(&mount.destination)).map_err(std::io::Error::other)?;
-        if destination.exists() {
-            continue;
-        }
-        let source_is_file = mount.source_type.as_deref() == Some("file")
-            || (mount.source_type.is_none() && Path::new(&mount.source).is_file());
-        if source_is_file {
-            if let Some(parent) = destination.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(destination, [])?;
-        } else {
-            fs::create_dir_all(destination)?;
-        }
-    }
-    let cache = rootfs.join("etc/ld.so.cache");
-    clear_path(&cache)?;
-    if let Some(parent) = cache.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(cache, [])?;
-    let config = rootfs.join("etc/ld.so.conf.d/zz_deepin-linglong-app.conf");
-    clear_path(&config)?;
-    if let Some(parent) = config.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(config, [])?;
-    Ok(())
-}
-
 fn rootfs_path(rootfs: &Path, path: &Path) -> Result<PathBuf, String> {
     let mut output = rootfs.to_path_buf();
     for component in path.components() {
@@ -2294,7 +2246,31 @@ fn lexical_normalize(path: &Path) -> PathBuf {
     output
 }
 
-fn resolve_overlay_mode() -> Result<String, String> {
+fn resolve_overlay_mode(repository: &LocalRepository, base: &Reference) -> Result<String, String> {
+    let base_layer = repository
+        .merged_layer_path(base)
+        .map_err(|error| error.to_string())?
+        .join("files");
+    let owner = fs::metadata(&base_layer)
+        .map_err(|error| {
+            format!(
+                "failed to inspect base layer {}: {error}",
+                base_layer.display()
+            )
+        })?
+        .uid();
+    let current_uid = rustix::process::getuid().as_raw();
+    let owner_matches = owner == current_uid;
+    let fuse_available = executable_in_path("fuse-overlayfs");
+    if !owner_matches {
+        if let Some(mode) = select_overlay_mode(false, false, false, fuse_available) {
+            return Ok(mode.to_string());
+        }
+        return Err(format!(
+            "base layer {} is owned by uid {owner}; fuse-overlayfs is required for uid {current_uid}",
+            base_layer.display()
+        ));
+    }
     let overlay_available = fs::read_to_string("/proc/filesystems").is_ok_and(|content| {
         content
             .lines()
@@ -2310,13 +2286,29 @@ fn resolve_overlay_mode() -> Result<String, String> {
             ))
         })
         .is_some_and(|(major, minor)| major > 5 || (major == 5 && minor >= 11));
-    if overlay_available && release_supports_userns {
-        return Ok("kernel".to_string());
+    select_overlay_mode(
+        owner_matches,
+        overlay_available,
+        release_supports_userns,
+        fuse_available,
+    )
+    .map(str::to_string)
+    .ok_or_else(|| "no available overlayfs implementation".to_string())
+}
+
+fn select_overlay_mode(
+    layer_owner_matches: bool,
+    kernel_overlay_available: bool,
+    release_supports_userns: bool,
+    fuse_available: bool,
+) -> Option<&'static str> {
+    if !layer_owner_matches {
+        return fuse_available.then_some("fuse");
     }
-    if executable_in_path("fuse-overlayfs") {
-        return Ok("fuse".to_string());
+    if kernel_overlay_available && release_supports_userns {
+        return Some("kernel");
     }
-    Err("no available overlayfs implementation".to_string())
+    fuse_available.then_some("fuse")
 }
 
 fn executable_in_path(name: &str) -> bool {
@@ -2329,6 +2321,166 @@ fn executable_in_path(name: &str) -> bool {
             })
         })
     })
+}
+
+enum MountedOverlayKind {
+    Kernel,
+    Fuse,
+}
+
+struct OverlayMount {
+    merged: PathBuf,
+    kind: MountedOverlayKind,
+}
+
+impl OverlayMount {
+    fn mount(
+        mode: &str,
+        base_layer: &Path,
+        app_cache: &Path,
+        bundle: &Path,
+    ) -> Result<Self, String> {
+        let merged = bundle.join("rootfs");
+        let overlay = bundle.join("overlay");
+        let upper = overlay.join("upperdir");
+        let work = overlay.join("workdir");
+        fs::create_dir_all(&upper).map_err(|error| {
+            format!(
+                "failed to create overlay upper directory {}: {error}",
+                upper.display()
+            )
+        })?;
+        fs::create_dir_all(&work).map_err(|error| {
+            format!(
+                "failed to create overlay work directory {}: {error}",
+                work.display()
+            )
+        })?;
+
+        let persistent_upper = app_cache.join("overlay/upperdir");
+        let mut lower = Vec::with_capacity(2);
+        if persistent_upper.is_dir() {
+            lower.push(persistent_upper);
+        }
+        lower.push(base_layer.to_path_buf());
+        let lower = lower
+            .iter()
+            .map(|path| escape_overlay_path(path))
+            .collect::<Vec<_>>()
+            .join(":");
+        let options = format!(
+            "lowerdir={lower},upperdir={},workdir={}",
+            escape_overlay_path(&upper),
+            escape_overlay_path(&work)
+        );
+
+        let kind = match mode {
+            "kernel" => {
+                mount_kernel_overlay(&merged, &format!("{options},userxattr"))?;
+                MountedOverlayKind::Kernel
+            }
+            "fuse" => {
+                let uid = rustix::process::getuid().as_raw();
+                let gid = rustix::process::getgid().as_raw();
+                let options = format!("{options},squash_to_uid={uid},squash_to_gid={gid}");
+                let output = Command::new("fuse-overlayfs")
+                    .args(["-o", &options])
+                    .arg(&merged)
+                    .output()
+                    .map_err(|error| format!("failed to execute fuse-overlayfs: {error}"))?;
+                if !output.status.success() {
+                    return Err(format!(
+                        "fuse-overlayfs failed for {}: {}",
+                        merged.display(),
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    ));
+                }
+                MountedOverlayKind::Fuse
+            }
+            value => return Err(format!("invalid overlayfs mode: {value}")),
+        };
+        Ok(Self { merged, kind })
+    }
+
+    fn unmount(&self) {
+        match self.kind {
+            MountedOverlayKind::Kernel => {
+                if unsafe { libc::umount(path_c_string(&self.merged).as_ptr()) } != 0 {
+                    unsafe {
+                        libc::umount2(path_c_string(&self.merged).as_ptr(), libc::MNT_DETACH);
+                    }
+                }
+            }
+            MountedOverlayKind::Fuse => {
+                if unsafe { libc::umount(path_c_string(&self.merged).as_ptr()) } == 0 {
+                    return;
+                }
+                let command = if executable_in_path("fusermount") {
+                    "fusermount"
+                } else {
+                    "fusermount3"
+                };
+                let success = Command::new(command)
+                    .arg("-u")
+                    .arg(&self.merged)
+                    .status()
+                    .is_ok_and(|status| status.success());
+                if !success {
+                    let lazy_success = Command::new(command)
+                        .args(["-z", "-u"])
+                        .arg(&self.merged)
+                        .status()
+                        .is_ok_and(|status| status.success());
+                    if !lazy_success {
+                        unsafe {
+                            libc::umount2(path_c_string(&self.merged).as_ptr(), libc::MNT_DETACH);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Drop for OverlayMount {
+    fn drop(&mut self) {
+        self.unmount();
+    }
+}
+
+fn mount_kernel_overlay(merged: &Path, options: &str) -> Result<(), String> {
+    let source = CString::new("none").expect("static string has no NUL byte");
+    let filesystem = CString::new("overlay").expect("static string has no NUL byte");
+    let target = path_c_string(merged);
+    let options = CString::new(options)
+        .map_err(|_| "overlayfs options contain an embedded NUL byte".to_string())?;
+    if unsafe {
+        libc::mount(
+            source.as_ptr(),
+            target.as_ptr(),
+            filesystem.as_ptr(),
+            0,
+            options.as_ptr().cast(),
+        )
+    } != 0
+    {
+        return Err(format!(
+            "failed to mount overlayfs at {}: {}",
+            merged.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+fn path_c_string(path: &Path) -> CString {
+    CString::new(path.as_os_str().as_bytes()).expect("filesystem path contains a NUL byte")
+}
+
+fn escape_overlay_path(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace(':', "\\:")
+        .replace(',', "\\,")
 }
 
 fn wait_for_container_pid(container_id: &str, fallback: u32) -> Result<i64, String> {
@@ -2413,6 +2565,86 @@ fn clear_path(path: &Path) -> Result<(), std::io::Error> {
     } else {
         fs::remove_file(path)
     }
+}
+
+struct BundleCleanup {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl BundleCleanup {
+    fn new(path: PathBuf) -> Self {
+        Self { path, armed: true }
+    }
+
+    fn finish(mut self) -> Result<(), String> {
+        self.armed = false;
+        cleanup_bundle(&self.path, Duration::from_secs(3))
+            .map_err(|error| format!("failed to clean up {}: {error}", self.path.display()))
+    }
+}
+
+impl Drop for BundleCleanup {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = cleanup_bundle(&self.path, Duration::from_secs(3));
+        }
+    }
+}
+
+fn cleanup_bundle(path: &Path, timeout: Duration) -> Result<(), std::io::Error> {
+    let rootfs = path.join("rootfs");
+    if let Ok(rootfs) = CString::new(rootfs.as_os_str().as_bytes()) {
+        unsafe {
+            libc::umount2(rootfs.as_ptr(), libc::MNT_DETACH);
+        }
+    }
+    let deadline = Instant::now() + timeout;
+    let mut last_error = None;
+    loop {
+        if !path_is_mounted(&rootfs) {
+            match make_directories_removable(path).and_then(|()| clear_path(path)) {
+                Ok(()) => return Ok(()),
+                Err(error) => last_error = Some(error),
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(last_error.unwrap_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!("{} remained mounted", rootfs.display()),
+                )
+            }));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn path_is_mounted(path: &Path) -> bool {
+    let Some(path) = path.to_str() else {
+        return true;
+    };
+    fs::read_to_string("/proc/self/mountinfo").is_ok_and(|mountinfo| {
+        mountinfo
+            .lines()
+            .any(|line| line.split_whitespace().nth(4) == Some(path))
+    })
+}
+
+fn make_directories_removable(path: &Path) -> Result<(), std::io::Error> {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return Ok(());
+    };
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    let mut permissions = metadata.permissions();
+    permissions.set_mode(permissions.mode() | 0o700);
+    fs::set_permissions(path, permissions)?;
+    for entry in fs::read_dir(path)? {
+        make_directories_removable(&entry?.path())?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2500,6 +2732,29 @@ mod tests {
     }
 
     #[test]
+    fn foreign_owned_layers_require_fuse_overlay() {
+        assert_eq!(select_overlay_mode(false, true, true, true), Some("fuse"));
+        assert_eq!(select_overlay_mode(false, true, true, false), None);
+        assert_eq!(select_overlay_mode(true, true, true, false), Some("kernel"));
+    }
+
+    #[test]
+    fn bundle_cleanup_removes_restricted_overlay_workdirs() {
+        let temporary = tempfile::tempdir().unwrap();
+        let bundle = temporary.path().join("bundle");
+        let work = bundle.join("overlay/workdir/work");
+        fs::create_dir_all(&work).unwrap();
+        fs::write(work.join("index"), "test").unwrap();
+        let mut permissions = fs::metadata(&work).unwrap().permissions();
+        permissions.set_mode(0o0);
+        fs::set_permissions(&work, permissions).unwrap();
+
+        BundleCleanup::new(bundle.clone()).finish().unwrap();
+
+        assert!(!bundle.exists());
+    }
+
+    #[test]
     fn container_id_is_stable_for_same_run_context() {
         let config = RunContextConfig {
             app: Some("stable/org.example.App/1.0.0.0/x86_64".to_string()),
@@ -2522,7 +2777,7 @@ mod tests {
     }
 
     #[test]
-    fn leaves_resolv_conf_absent_for_copy_symlink_mount() {
+    fn binds_resolv_conf_without_rewriting_rootfs() {
         let temporary = tempfile::tempdir().unwrap();
         let rootfs = temporary.path().join("rootfs");
         fs::create_dir_all(rootfs.join("etc")).unwrap();
@@ -2541,10 +2796,17 @@ mod tests {
             version: "1".to_string(),
         };
 
-        prepare_runtime_mount_points(&rootfs, &config).unwrap();
+        let mut mounts = Vec::new();
+        append_network_and_timezone_mounts(&mut mounts, &config);
 
         assert!(rootfs.join("etc").is_dir());
-        assert!(!rootfs.join("etc/resolv.conf").exists());
+        assert_eq!(
+            fs::read_to_string(rootfs.join("etc/resolv.conf")).unwrap(),
+            "from-base"
+        );
+        assert!(mounts.iter().any(|mount| {
+            mount["destination"] == "/etc/resolv.conf" && mount["source"] == "/etc/resolv.conf"
+        }));
     }
 
     #[test]
