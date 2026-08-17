@@ -47,4 +47,9 @@ cargo build --workspace --release --locked
 tests/system/runtime-e2e.sh
 ```
 
+发布验证还在 Deepin 25 虚拟机中使用系统仓库的服务账号属主层实际启动
+`org.deepin.calculator`，检查窗口、`ll-cli ps`、`ll-cli kill`、退出状态、
+`ll-box list` 及挂载清理。该路径覆盖用户/挂载命名空间、FUSE OverlayFS、
+图形会话透传和真实 OCI 容器生命周期，而不是仅运行合成单元测试。
+
 实现期间还对冻结二进制完成了 CLI 非法/边界参数、确定性参数模糊测试、帮助/版本、本地化 MO、UAB、`ll-init` 和 `ll-box` 生命周期的差分矩阵。仓库内单元、集成和系统测试是发布前必须全部通过的最终门禁。

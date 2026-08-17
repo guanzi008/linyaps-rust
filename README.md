@@ -16,6 +16,11 @@
 
 完整兼容范围、冻结行为和验证清单见 [`COMPATIBILITY.md`](COMPATIBILITY.md)。配套 OCI 运行时位于独立仓库 `linyaps-box-rust`。
 
+运行应用要求内核启用非特权用户命名空间。系统仓库层通常由
+`deepin-linglong` 服务账号持有，此时 `ll-cli` 会自动选择
+`fuse-overlayfs` 并将层内属主映射到当前用户；本地用户持有的层可直接使用
+内核 OverlayFS。Debian 包已声明 `fuse-overlayfs` 为运行依赖。
+
 ## 构建测试
 
 要求 Linux 和 Rust 1.92 或更高版本：

@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::ffi::{CStr, CString, OsStr};
@@ -31,6 +31,7 @@ mod analysis;
 mod cli11;
 mod frozen_help;
 mod localized_help;
+mod namespace;
 mod runtime;
 #[cfg(feature = "wayland-security-context")]
 mod wayland_security;
@@ -927,7 +928,7 @@ async fn run_search(options: Search, json: bool, no_dbus: bool) -> Result<(), St
         .await
         .map_err(|error| error.to_string())?;
     let mut repos = config.repos;
-    repos.sort_by(|left, right| right.priority.cmp(&left.priority));
+    repos.sort_by_key(|repo| Reverse(repo.priority));
     if repos.is_empty() {
         return Err("no repo found".to_string());
     }
@@ -1844,7 +1845,7 @@ fn format_repo_config(config: &RepoConfigV2) -> String {
         display_column(&linyaps_i18n::gettext("Priority"), 10),
     ));
     let mut repos = config.repos.clone();
-    repos.sort_by(|left, right| right.priority.cmp(&left.priority));
+    repos.sort_by_key(|repo| Reverse(repo.priority));
     for repo in repos {
         let url = if repo.url.len() > MAX_URL_LENGTH {
             format!("{}...", &repo.url[..97])

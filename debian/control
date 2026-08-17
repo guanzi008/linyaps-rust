@@ -107,6 +107,7 @@ X-Cargo-Crates:
 Depends:
  desktop-file-utils,
  erofs-utils,
+ fuse-overlayfs,
  init-system-helpers (>= 1.52),
  libglib2.0-bin,
  linglong-box (>= 2.3.0~rust1) | crun,

@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -205,7 +206,7 @@ fn format_repository_config(config: &RepoConfigV2) -> String {
         display_column(&linyaps_i18n::gettext("Priority"), 10),
     ));
     let mut repos = config.repos.clone();
-    repos.sort_by(|left, right| right.priority.cmp(&left.priority));
+    repos.sort_by_key(|repo| Reverse(repo.priority));
     for repo in repos {
         let alias = repo.effective_name().to_string();
         let url = if repo.url.len() > MAX_URL_LENGTH {

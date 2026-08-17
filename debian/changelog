@@ -1,3 +1,19 @@
+linyaps-rust (1.14.0~rust1-3) unstable; urgency=medium
+
+  * Reuse running containers before entering a sibling user namespace.
+  * Serialize startup and wait for runtime bundle cleanup to finish.
+  * Verify repeated, failed, reused, and graphical runs on Deepin 25.
+
+ -- guanzi008 <20619190+guanzi008@users.noreply.github.com>  Mon, 17 Aug 2026 18:10:00 +0800
+
+linyaps-rust (1.14.0~rust1-2) unstable; urgency=medium
+
+  * Run applications inside Rust-managed user and mount namespaces.
+  * Use ownership-aware FUSE OverlayFS for service-owned system layers.
+  * Clean runtime bundles and mounts on every failure path.
+
+ -- guanzi008 <20619190+guanzi008@users.noreply.github.com>  Mon, 17 Aug 2026 17:20:52 +0800
+
 linyaps-rust (1.14.0~rust1-1) unstable; urgency=medium
 
   * Initial Debian release of the Rust implementation.
