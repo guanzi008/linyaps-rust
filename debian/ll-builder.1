@@ -1,0 +1,42 @@
+.TH LL-BUILDER 1 "August 2026" "Linyaps 1.14.0" "User Commands"
+.SH NAME
+ll-builder \- build and publish Linyaps applications
+.SH SYNOPSIS
+.B ll-builder
+.RI [ options ]
+.RI [ command ]
+.RI [ arguments ]
+.SH DESCRIPTION
+.B ll-builder
+creates, builds, imports, exports and publishes Linyaps application projects.
+.SH COMMANDS
+.TP
+.B create, build, clean
+Create a project and manage its build output.
+.TP
+.B run, list, remove
+Run and manage locally built applications.
+.TP
+.B import, extract, export, push
+Move layers and universal application bundles between repositories or files.
+.TP
+.B repo
+Manage builder repository configuration.
+.SH OPTIONS
+.TP
+.B \-h, \-\-help
+Show command help.
+.TP
+.B \-\-help-all
+Show help for all commands.
+.TP
+.B \-\-version
+Show version information.
+.SH FILES
+.TP
+.I linglong.yaml
+Default project description.
+.SH SEE ALSO
+.BR ll-cli (1),
+.BR ll-builder-export (1),
+.BR ll-box (1)

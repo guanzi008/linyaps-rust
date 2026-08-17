@@ -1,0 +1,5 @@
+# ll-init is PID 1 inside the application container and must not rely on the
+# host or container image for its C runtime.
+linglong-bin: statically-linked-binary [usr/libexec/linglong/ll-init]
+# serde_yml is a pure-Rust YAML implementation, not an embedded libyaml copy.
+linglong-bin: embedded-library libyaml *

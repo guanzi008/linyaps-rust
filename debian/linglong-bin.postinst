@@ -53,5 +53,5 @@ if [ -z "${DPKG_ROOT:-}" ]; then
         sysctl -p /usr/lib/sysctl.d/linglong.conf >/dev/null 2>&1 || true
     fi
 fi
-
+#DEBHELPER#
 exit 0

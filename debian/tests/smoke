@@ -1,0 +1,23 @@
+#!/bin/sh
+set -eu
+
+ll-cli --version
+ll-builder --version
+ll-builder-export --help >/dev/null
+
+test -x /usr/libexec/linglong/ll-init
+test -x /usr/libexec/linglong/ll-package-manager
+test -x /usr/lib/linglong/builder/uab/uab-header
+test -f /usr/lib/systemd/system/org.deepin.linglong.PackageManager.service
+test -f /usr/lib/sysusers.d/linglong.conf
+test -f /usr/lib/tmpfiles.d/linglong.conf
+
+if readelf -l /usr/libexec/linglong/ll-init \
+    | grep -qE 'INTERP|Requesting program interpreter'; then
+    echo "ll-init has a dynamic program interpreter" >&2
+    exit 1
+fi
+if readelf -d /usr/libexec/linglong/ll-init 2>/dev/null | grep -q '(NEEDED)'; then
+    echo "ll-init has dynamic dependencies" >&2
+    exit 1
+fi

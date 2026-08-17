@@ -50,17 +50,22 @@ target/release/ll-system-helper install \
 
 ## Debian 包
 
-在 Debian/Ubuntu 构建机上安装 `dpkg-dev`、`binutils`、`musl-tools` 和
-Rust musl 目标后执行：
+仓库包含标准 Debian 源码包目录 `debian/`，并通过 `dh-rust` 离线使用
+Debian 提供的 `librust-*-dev` crate。先启用包含这些构建依赖的 Debian
+仓库，然后执行：
 
 ```sh
-rustup target add x86_64-unknown-linux-musl
-./packaging/debian/build-debs.sh
+sudo apt build-dep ./
+dpkg-buildpackage --build=binary --no-sign
 ```
 
-为保持上游包边界，会生成 `linglong-bin` 和 `linglong-builder` 两个包及
-`dist/SHA256SUMS`。`linglong-builder` 是可选的开发工具包；运行应用只需
-`linglong-bin` 与配套仓库发布的 `linglong-box`。可使用
-`DEB_VERSION`、`DEB_ARCH`、`OUTPUT_DIR` 和 `SOURCE_DATE_EPOCH` 覆盖默认元数据。
+构建结果按照 Debian 惯例写入源码目录的上一级，包括 `linglong-bin`、
+`linglong-builder`、`.changes` 和 `.buildinfo`。版本、架构、依赖计算、调试
+符号拆分及校验和均由 Debian 工具链管理；发布新版本时应先更新
+`debian/changelog`。`ll-init` 由打包规则使用目标架构的静态 GNU libc
+重新链接，安装器仍会验证它没有动态解释器或动态依赖。
+
+`linglong-builder` 是可选的开发工具包；运行应用只需 `linglong-bin` 与
+配套仓库发布的 `linglong-box`。
 
 许可证为 `LGPL-3.0-or-later`；随仓库保留了冻结上游的完整 REUSE 许可证集合。

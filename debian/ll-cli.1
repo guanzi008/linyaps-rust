@@ -1,0 +1,44 @@
+.TH LL-CLI 1 "August 2026" "Linyaps 1.14.0" "User Commands"
+.SH NAME
+ll-cli \- run and manage Linyaps applications and runtimes
+.SH SYNOPSIS
+.B ll-cli
+.RI [ options ]
+.RI [ command ]
+.RI [ arguments ]
+.SH DESCRIPTION
+.B ll-cli
+is the command-line client for the Linyaps package manager.  It installs,
+removes, upgrades, searches and runs applications, bases and runtimes.
+.SH COMMANDS
+.TP
+.B run, ps, enter, kill
+Run applications and manage running instances.
+.TP
+.B install, uninstall, upgrade, prune
+Modify the local package installation.
+.TP
+.B search, list, info, content, analyze
+Query packages and inspect installed content.
+.TP
+.B repo
+Display or modify repository configuration.
+.SH OPTIONS
+.TP
+.B \-h, \-\-help
+Show command help.
+.TP
+.B \-\-help-all
+Show help for all commands.
+.TP
+.B \-\-version
+Show version information.
+.TP
+.B \-\-json
+Request JSON output where supported.
+.TP
+.B \-v, \-\-verbose
+Increase diagnostic verbosity.
+.SH SEE ALSO
+.BR ll-builder (1),
+.BR ll-box (1)

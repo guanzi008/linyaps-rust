@@ -6,5 +6,5 @@ if [ -z "${DPKG_ROOT:-}" ] && [ "$1" = remove ] && [ -d /run/systemd/system ]; t
         deb-systemd-invoke stop org.deepin.linglong.PackageManager.service >/dev/null || true
     fi
 fi
-
+#DEBHELPER#
 exit 0

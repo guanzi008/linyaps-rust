@@ -15,5 +15,5 @@ if [ -z "${DPKG_ROOT:-}" ]; then
         update-mime-database /usr/share/mime >/dev/null || true
     fi
 fi
-
+#DEBHELPER#
 exit 0

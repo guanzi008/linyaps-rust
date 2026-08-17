@@ -1,0 +1,2 @@
+# serde_yml is a pure-Rust YAML implementation, not an embedded libyaml copy.
+linglong-builder: embedded-library libyaml *

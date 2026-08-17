@@ -1,0 +1,22 @@
+Linyaps Rust Debian packaging
+=============================
+
+The package is built with dh-rust against crate source packages from the
+Debian Cargo registry.  Cargo is configured by dh-rust to remain offline;
+network downloads during the package build are not supported.
+
+The feature-level Build-Depends list is the union of the direct external
+dependencies declared by the workspace crates and the two bundled crates.
+It is kept in debian/control because apt must resolve build dependencies
+before debian/rules can run.  dh-rust's X-Cargo-Crates mapping then assigns
+the application crates to the two binary packages.
+
+This upstream workspace contains private application crates and three bundled
+crate sources: am-fs-erofs, the patched gix-transport implementation, and the
+Linyaps workspace crates themselves.  Their licenses are recorded in
+debian/copyright.  All other Rust dependencies must be supplied by Debian
+librust-*-dev packages listed in debian/control.
+
+The ll-init executable is intentionally rebuilt with crt-static after both the
+normal build and the test phase.  It runs as PID 1 inside an application
+container and must not depend on libraries from the host or container image.

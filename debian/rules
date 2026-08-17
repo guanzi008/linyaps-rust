@@ -1,0 +1,55 @@
+#!/usr/bin/make -f
+
+include /usr/share/dpkg/architecture.mk
+include /usr/share/dpkg/buildflags.mk
+include /usr/share/rustc/architecture.mk
+
+export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS
+export DEB_HOST_GNU_TYPE DEB_HOST_RUST_TYPE
+export CARGO_HOME = $(CURDIR)/debian/cargo_home
+export CARGO_NET_OFFLINE = true
+export CARGO_PROFILE_RELEASE_STRIP = false
+
+RUST_CARGO = /usr/share/dh-rust/bin/cargo
+RUST_PROFILE = $(if $(filter noopt,$(DEB_BUILD_OPTIONS)),debug,release)
+RUST_TARGET = target/$(DEB_HOST_RUST_TYPE)/$(RUST_PROFILE)
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	dh_auto_build --buildsystem=rust -- --workspace --exclude ll-init
+	$(RUST_CARGO) rustc --package ll-init -- -C target-feature=+crt-static
+
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS) $(DEB_BUILD_PROFILES)))
+	dh_auto_test --buildsystem=rust -- --workspace
+	$(RUST_CARGO) rustc --package ll-init -- -C target-feature=+crt-static
+else
+	@:
+endif
+
+override_dh_auto_install:
+	$(RUST_TARGET)/ll-system-helper install \
+		--destdir $(CURDIR)/debian/tmp \
+		--prefix /usr \
+		--binary-dir $(CURDIR)/$(RUST_TARGET)
+	/usr/share/dh-rust/bin/dh-rust-built-using \
+		$(RUST_TARGET) linglong-bin
+	/usr/share/dh-rust/bin/dh-rust-built-using \
+		$(RUST_TARGET) linglong-builder
+
+# These integrations are deliberately handled by the retained maintainer
+# scripts.  Auto-generated snippets differ under DPKG_ROOT and would duplicate
+# service operations.
+override_dh_installsystemd:
+	@:
+
+override_dh_installsysusers:
+	@:
+
+override_dh_installtmpfiles:
+	@:
+
+override_dh_missing:
+	dh_missing --fail-missing
