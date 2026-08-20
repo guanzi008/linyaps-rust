@@ -227,7 +227,7 @@ fn parse_spec(path: &Path, bytes: &[u8]) -> Result<CdiFile, CdiError> {
 }
 
 fn checksum(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    crate::hex_encode(Sha256::digest(bytes))
 }
 
 fn merge_edits(mut global: ContainerEdits, local: ContainerEdits) -> ContainerEdits {

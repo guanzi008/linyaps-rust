@@ -21,7 +21,7 @@ fn fixture(directory: &tempfile::TempDir) -> (std::path::PathBuf, UabMetaInfo) {
     fs::set_permissions(tree.join("loader"), fs::Permissions::from_mode(0o755)).unwrap();
     let bundle = build_erofs_image(&tree).unwrap();
     let metadata = UabMetaInfo {
-        digest: format!("{:x}", Sha256::digest(&bundle)),
+        digest: linyaps_core::hex_encode(Sha256::digest(&bundle)),
         layers: vec![UabLayer {
             info: PackageInfoV2 {
                 arch: vec!["x86_64".to_string()],

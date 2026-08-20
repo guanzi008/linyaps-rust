@@ -245,7 +245,8 @@ fn ld_configuration(
     for factor in factors {
         hasher.update(factor.as_bytes());
     }
-    let mut output = format!("# {:x}\n", hasher.finalize());
+    let digest = linyaps_core::hex_encode(hasher.finalize());
+    let mut output = format!("# {digest}\n");
     if runtime.is_some() {
         output.push_str(&format!(
             "/runtime/lib\n/runtime/lib/{triplet}\ninclude /runtime/etc/ld.so.conf\n"

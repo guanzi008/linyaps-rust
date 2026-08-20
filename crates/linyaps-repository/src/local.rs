@@ -1204,7 +1204,7 @@ impl LocalRepository {
             for commit in &commits {
                 hasher.update(commit.as_bytes());
             }
-            let id = format!("{:x}", hasher.finalize());
+            let id = linyaps_core::hex_encode(hasher.finalize());
             let item = RepositoryCacheMergedItem {
                 binary_commit: Some(binary_commit),
                 commits: commits.clone(),

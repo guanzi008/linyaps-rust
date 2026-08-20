@@ -1,6 +1,6 @@
 //! CLI tests for `src/bin/mkfs_erofs.rs`.
 //!
-//! Uses `assert_cmd::Command::cargo_bin` to spawn the freshly-built
+//! Uses `assert_cmd::cargo::cargo_bin_cmd!` to spawn the freshly-built
 //! binary. Each test owns its own `tempfile::TempDir` so they don't
 //! step on each other when `cargo test` runs them in parallel.
 //!
@@ -23,10 +23,13 @@ use assert_cmd::Command;
 use common::{dir, file, open_image_path};
 use fs_erofs::mkfs;
 
+fn mkfs_erofs_command() -> Command {
+    assert_cmd::cargo::cargo_bin_cmd!("mkfs_erofs")
+}
+
 #[test]
 fn help_flag_exits_zero_and_prints_usage() {
-    let out = Command::cargo_bin("mkfs_erofs")
-        .unwrap()
+    let out = mkfs_erofs_command()
         .arg("--help")
         .output()
         .expect("spawn mkfs_erofs");
@@ -37,11 +40,7 @@ fn help_flag_exits_zero_and_prints_usage() {
 
 #[test]
 fn short_help_flag_also_prints_usage() {
-    let out = Command::cargo_bin("mkfs_erofs")
-        .unwrap()
-        .arg("-h")
-        .output()
-        .expect("spawn");
+    let out = mkfs_erofs_command().arg("-h").output().expect("spawn");
     assert!(out.status.success());
     assert!(String::from_utf8_lossy(&out.stdout).contains("Usage:"));
 }
@@ -51,8 +50,7 @@ fn missing_source_dir_exits_nonzero_with_message() {
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("img.bin");
     let nonexistent = dir.path().join("does-not-exist");
-    let result = Command::cargo_bin("mkfs_erofs")
-        .unwrap()
+    let result = mkfs_erofs_command()
         .arg(&out)
         .arg(&nonexistent)
         .output()
@@ -71,8 +69,7 @@ fn missing_source_dir_exits_nonzero_with_message() {
 fn block_size_not_power_of_two_exits_two() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("src")).unwrap();
-    let result = Command::cargo_bin("mkfs_erofs")
-        .unwrap()
+    let result = mkfs_erofs_command()
         .arg(dir.path().join("img.bin"))
         .arg(dir.path().join("src"))
         .arg("--block-size")
@@ -88,8 +85,7 @@ fn block_size_not_power_of_two_exits_two() {
 fn block_size_below_range_exits_two() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("src")).unwrap();
-    let result = Command::cargo_bin("mkfs_erofs")
-        .unwrap()
+    let result = mkfs_erofs_command()
         .arg(dir.path().join("img.bin"))
         .arg(dir.path().join("src"))
         .arg("--block-size")
@@ -103,8 +99,7 @@ fn block_size_below_range_exits_two() {
 
 #[test]
 fn block_size_missing_arg_exits_two() {
-    let result = Command::cargo_bin("mkfs_erofs")
-        .unwrap()
+    let result = mkfs_erofs_command()
         .arg("--block-size")
         .output()
         .expect("spawn");
@@ -114,8 +109,7 @@ fn block_size_missing_arg_exits_two() {
 
 #[test]
 fn block_size_not_an_integer_exits_two() {
-    let result = Command::cargo_bin("mkfs_erofs")
-        .unwrap()
+    let result = mkfs_erofs_command()
         .arg("--block-size")
         .arg("abc")
         .arg("/tmp/out")
@@ -129,8 +123,7 @@ fn block_size_not_an_integer_exits_two() {
 
 #[test]
 fn unknown_flag_exits_two() {
-    let result = Command::cargo_bin("mkfs_erofs")
-        .unwrap()
+    let result = mkfs_erofs_command()
         .arg("--unknown-thing")
         .output()
         .expect("spawn");
@@ -140,10 +133,7 @@ fn unknown_flag_exits_two() {
 
 #[test]
 fn missing_positional_args_exits_two() {
-    let result = Command::cargo_bin("mkfs_erofs")
-        .unwrap()
-        .output()
-        .expect("spawn");
+    let result = mkfs_erofs_command().output().expect("spawn");
     assert_eq!(result.status.code(), Some(2));
     // Falls through to the "positional.len() != 2" arm which prints
     // USAGE.
@@ -163,8 +153,7 @@ fn round_trip_small_tree() {
     std::fs::write(src.join("sub").join("c.txt"), b"charlie").unwrap();
 
     let img = tmp.path().join("out.img");
-    let result = Command::cargo_bin("mkfs_erofs")
-        .unwrap()
+    let result = mkfs_erofs_command()
         .arg(&img)
         .arg(&src)
         .output()
@@ -202,8 +191,7 @@ fn round_trip_with_explicit_block_size_512() {
     std::fs::write(src.join("hi.txt"), b"hello at 512").unwrap();
 
     let img = tmp.path().join("out.img");
-    let result = Command::cargo_bin("mkfs_erofs")
-        .unwrap()
+    let result = mkfs_erofs_command()
         .arg(&img)
         .arg(&src)
         .arg("--block-size")
@@ -234,8 +222,7 @@ fn walk_skips_symlinks_with_warning() {
     std::os::unix::fs::symlink("real.txt", src.join("link.txt")).unwrap();
 
     let img = tmp.path().join("out.img");
-    let result = Command::cargo_bin("mkfs_erofs")
-        .unwrap()
+    let result = mkfs_erofs_command()
         .arg(&img)
         .arg(&src)
         .output()
@@ -267,8 +254,7 @@ fn source_can_be_a_regular_file() {
     std::fs::write(&payload, b"singular").unwrap();
     let img = tmp.path().join("out.img");
 
-    let result = Command::cargo_bin("mkfs_erofs")
-        .unwrap()
+    let result = mkfs_erofs_command()
         .arg(&img)
         .arg(&payload)
         .output()
@@ -305,8 +291,7 @@ fn cli_image_matches_in_process_image_for_simple_tree() {
     std::fs::write(src.join("two.txt"), b"two two").unwrap();
     let img = tmp.path().join("out.img");
 
-    let result = Command::cargo_bin("mkfs_erofs")
-        .unwrap()
+    let result = mkfs_erofs_command()
         .arg(&img)
         .arg(&src)
         .output()

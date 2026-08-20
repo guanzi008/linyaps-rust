@@ -87,7 +87,7 @@ pub async fn export_uab(
         }
     };
     let bundle = build_erofs_image_with_compression(&bundle_tree, compression, false)?;
-    let digest = format!("{:x}", Sha256::digest(&bundle));
+    let digest = linyaps_core::hex_encode(Sha256::digest(&bundle));
     let icon = options
         .icon
         .as_deref()

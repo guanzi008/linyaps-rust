@@ -6,15 +6,16 @@ use std::io;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{FileExt, MetadataExt, symlink};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use fs_core::{BlockRead, Error as BlockError};
 use fs_erofs::{FileType as ErofsFileType, Filesystem as ErofsFilesystem, Inode};
 use fuser::{
-    BackgroundSession, FUSE_ROOT_ID, FileAttr, FileType, Filesystem as FuseFilesystem, MountOption,
-    ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyStatfs,
-    ReplyXattr, Request,
+    AccessFlags, BackgroundSession, Config, Errno, FileAttr, FileHandle, FileType,
+    Filesystem as FuseFilesystem, FopenFlags, Generation, INodeNo, LockOwner, MountOption,
+    OpenAccMode, OpenFlags, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry,
+    ReplyOpen, ReplyStatfs, ReplyXattr, Request,
 };
 
 const ATTRIBUTE_TTL: Duration = Duration::from_secs(1);
@@ -60,9 +61,13 @@ impl BlockRead for OffsetDevice {
 
 pub struct ReadOnlyFilesystem {
     filesystem: ErofsFilesystem,
-    nodes: HashMap<u64, u64>,
-    identities: HashMap<u64, u64>,
-    parents: HashMap<u64, u64>,
+    inodes: Mutex<InodeState>,
+}
+
+struct InodeState {
+    nodes: HashMap<INodeNo, u64>,
+    identities: HashMap<u64, INodeNo>,
+    parents: HashMap<INodeNo, INodeNo>,
     next_inode: u64,
 }
 
@@ -72,22 +77,27 @@ impl ReadOnlyFilesystem {
         let filesystem = ErofsFilesystem::open(device).map_err(erofs_error)?;
         let root = filesystem.root_inode().map_err(erofs_error)?;
         let mut nodes = HashMap::new();
-        nodes.insert(FUSE_ROOT_ID, root.nid);
+        nodes.insert(INodeNo::ROOT, root.nid);
         let mut identities = HashMap::new();
-        identities.insert(root.nid, FUSE_ROOT_ID);
+        identities.insert(root.nid, INodeNo::ROOT);
         let mut parents = HashMap::new();
-        parents.insert(FUSE_ROOT_ID, FUSE_ROOT_ID);
+        parents.insert(INodeNo::ROOT, INodeNo::ROOT);
         Ok(Self {
             filesystem,
-            nodes,
-            identities,
-            parents,
-            next_inode: FUSE_ROOT_ID + 1,
+            inodes: Mutex::new(InodeState {
+                nodes,
+                identities,
+                parents,
+                next_inode: INodeNo::ROOT.0 + 1,
+            }),
         })
     }
 
-    fn inode(&self, inode: u64) -> io::Result<Inode> {
+    fn inode(&self, inode: INodeNo) -> io::Result<Inode> {
         let nid = self
+            .inodes
+            .lock()
+            .map_err(|_| io::Error::other("FUSE inode map lock poisoned"))?
             .nodes
             .get(&inode)
             .copied()
@@ -95,19 +105,23 @@ impl ReadOnlyFilesystem {
         self.filesystem.read_inode(nid).map_err(erofs_error)
     }
 
-    fn inode_for(&mut self, nid: u64, parent: u64) -> u64 {
-        if let Some(inode) = self.identities.get(&nid) {
-            return *inode;
+    fn inode_for(&self, nid: u64, parent: INodeNo) -> io::Result<INodeNo> {
+        let mut inodes = self
+            .inodes
+            .lock()
+            .map_err(|_| io::Error::other("FUSE inode map lock poisoned"))?;
+        if let Some(inode) = inodes.identities.get(&nid) {
+            return Ok(*inode);
         }
-        let inode = self.next_inode;
-        self.next_inode = self.next_inode.saturating_add(1);
-        self.nodes.insert(inode, nid);
-        self.identities.insert(nid, inode);
-        self.parents.insert(inode, parent);
-        inode
+        let inode = INodeNo(inodes.next_inode);
+        inodes.next_inode = inodes.next_inode.saturating_add(1);
+        inodes.nodes.insert(inode, nid);
+        inodes.identities.insert(nid, inode);
+        inodes.parents.insert(inode, parent);
+        Ok(inode)
     }
 
-    fn attributes(&self, inode: u64, node: &Inode) -> FileAttr {
+    fn attributes(&self, inode: INodeNo, node: &Inode) -> FileAttr {
         let timestamp = UNIX_EPOCH
             .checked_add(Duration::new(node.mtime, node.mtime_nsec.min(999_999_999)))
             .unwrap_or(UNIX_EPOCH);
@@ -135,14 +149,14 @@ impl ReadOnlyFilesystem {
         }
     }
 
-    fn xattrs(&self, inode: u64) -> io::Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    fn xattrs(&self, inode: INodeNo) -> io::Result<Vec<(Vec<u8>, Vec<u8>)>> {
         let inode = self.inode(inode)?;
         self.filesystem.xattrs(&inode).map_err(erofs_error)
     }
 }
 
 impl FuseFilesystem for ReadOnlyFilesystem {
-    fn lookup(&mut self, _request: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEntry) {
+    fn lookup(&self, _request: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
         let result = (|| {
             if name.as_bytes().is_empty()
                 || name.as_bytes().contains(&b'/')
@@ -155,20 +169,20 @@ impl FuseFilesystem for ReadOnlyFilesystem {
                 .filesystem
                 .lookup(&directory, name.as_bytes())
                 .map_err(erofs_error)?;
-            let inode = self.inode_for(node.nid, parent);
+            let inode = self.inode_for(node.nid, parent)?;
             Ok::<_, io::Error>(self.attributes(inode, &node))
         })();
         match result {
-            Ok(attributes) => reply.entry(&ATTRIBUTE_TTL, &attributes, 0),
+            Ok(attributes) => reply.entry(&ATTRIBUTE_TTL, &attributes, Generation(0)),
             Err(error) => reply.error(error_code(&error)),
         }
     }
 
     fn getattr(
-        &mut self,
-        _request: &Request<'_>,
-        inode: u64,
-        _handle: Option<u64>,
+        &self,
+        _request: &Request,
+        inode: INodeNo,
+        _handle: Option<FileHandle>,
         reply: ReplyAttr,
     ) {
         match self.inode(inode).map(|node| self.attributes(inode, &node)) {
@@ -177,7 +191,7 @@ impl FuseFilesystem for ReadOnlyFilesystem {
         }
     }
 
-    fn readlink(&mut self, _request: &Request<'_>, inode: u64, reply: ReplyData) {
+    fn readlink(&self, _request: &Request, inode: INodeNo, reply: ReplyData) {
         let result = self.inode(inode).and_then(|node| {
             self.filesystem
                 .read_symlink_target(&node)
@@ -189,34 +203,30 @@ impl FuseFilesystem for ReadOnlyFilesystem {
         }
     }
 
-    fn open(&mut self, _request: &Request<'_>, inode: u64, flags: i32, reply: ReplyOpen) {
-        if flags & libc::O_ACCMODE != libc::O_RDONLY {
-            reply.error(libc::EROFS);
+    fn open(&self, _request: &Request, inode: INodeNo, flags: OpenFlags, reply: ReplyOpen) {
+        if flags.acc_mode() != OpenAccMode::O_RDONLY {
+            reply.error(Errno::EROFS);
             return;
         }
         match self.inode(inode) {
-            Ok(node) if node.is_regular_file() => reply.opened(0, 0),
-            Ok(node) if node.is_dir() => reply.error(libc::EISDIR),
-            Ok(_) => reply.error(libc::EINVAL),
+            Ok(node) if node.is_regular_file() => reply.opened(FileHandle(0), FopenFlags::empty()),
+            Ok(node) if node.is_dir() => reply.error(Errno::EISDIR),
+            Ok(_) => reply.error(Errno::EINVAL),
             Err(error) => reply.error(error_code(&error)),
         }
     }
 
     fn read(
-        &mut self,
-        _request: &Request<'_>,
-        inode: u64,
-        _handle: u64,
-        offset: i64,
+        &self,
+        _request: &Request,
+        inode: INodeNo,
+        _handle: FileHandle,
+        offset: u64,
         size: u32,
-        _flags: i32,
-        _lock_owner: Option<u64>,
+        _flags: OpenFlags,
+        _lock_owner: Option<LockOwner>,
         reply: ReplyData,
     ) {
-        if offset < 0 {
-            reply.error(libc::EINVAL);
-            return;
-        }
         let result = (|| {
             let node = self.inode(inode)?;
             if !node.is_regular_file() {
@@ -226,7 +236,6 @@ impl FuseFilesystem for ReadOnlyFilesystem {
                     libc::EINVAL
                 }));
             }
-            let offset = offset as u64;
             if offset >= node.size {
                 return Ok(Vec::new());
             }
@@ -244,32 +253,35 @@ impl FuseFilesystem for ReadOnlyFilesystem {
         }
     }
 
-    fn opendir(&mut self, _request: &Request<'_>, inode: u64, _flags: i32, reply: ReplyOpen) {
+    fn opendir(&self, _request: &Request, inode: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
         match self.inode(inode) {
-            Ok(node) if node.is_dir() => reply.opened(0, 0),
-            Ok(_) => reply.error(libc::ENOTDIR),
+            Ok(node) if node.is_dir() => reply.opened(FileHandle(0), FopenFlags::empty()),
+            Ok(_) => reply.error(Errno::ENOTDIR),
             Err(error) => reply.error(error_code(&error)),
         }
     }
 
     fn readdir(
-        &mut self,
-        _request: &Request<'_>,
-        inode: u64,
-        _handle: u64,
-        offset: i64,
+        &self,
+        _request: &Request,
+        inode: INodeNo,
+        _handle: FileHandle,
+        offset: u64,
         mut reply: ReplyDirectory,
     ) {
-        if offset < 0 {
-            reply.error(libc::EINVAL);
-            return;
-        }
         let result = (|| {
             let directory = self.inode(inode)?;
             if !directory.is_dir() {
                 return Err(io::Error::from_raw_os_error(libc::ENOTDIR));
             }
-            let parent = self.parents.get(&inode).copied().unwrap_or(FUSE_ROOT_ID);
+            let parent = self
+                .inodes
+                .lock()
+                .map_err(|_| io::Error::other("FUSE inode map lock poisoned"))?
+                .parents
+                .get(&inode)
+                .copied()
+                .unwrap_or(INodeNo::ROOT);
             let mut entries = vec![
                 (inode, FileType::Directory, OsString::from(".")),
                 (parent, FileType::Directory, OsString::from("..")),
@@ -286,7 +298,7 @@ impl FuseFilesystem for ReadOnlyFilesystem {
                     ));
                 }
                 let node = self.filesystem.read_inode(entry.nid).map_err(erofs_error)?;
-                let child = self.inode_for(node.nid, inode);
+                let child = self.inode_for(node.nid, inode)?;
                 entries.push((
                     child,
                     file_type(node.file_type()),
@@ -305,14 +317,14 @@ impl FuseFilesystem for ReadOnlyFilesystem {
         for (index, (entry_inode, kind, name)) in
             entries.into_iter().enumerate().skip(offset as usize)
         {
-            if reply.add(entry_inode, (index + 1) as i64, kind, name) {
+            if reply.add(entry_inode, (index + 1) as u64, kind, name) {
                 break;
             }
         }
         reply.ok();
     }
 
-    fn statfs(&mut self, _request: &Request<'_>, _inode: u64, reply: ReplyStatfs) {
+    fn statfs(&self, _request: &Request, _inode: INodeNo, reply: ReplyStatfs) {
         let superblock = self.filesystem.superblock();
         let block_size = superblock.block_size().try_into().unwrap_or(u32::MAX);
         reply.statfs(
@@ -328,9 +340,9 @@ impl FuseFilesystem for ReadOnlyFilesystem {
     }
 
     fn getxattr(
-        &mut self,
-        _request: &Request<'_>,
-        inode: u64,
+        &self,
+        _request: &Request,
+        inode: INodeNo,
         name: &OsStr,
         size: u32,
         reply: ReplyXattr,
@@ -344,7 +356,7 @@ impl FuseFilesystem for ReadOnlyFilesystem {
         reply_xattr(result, size, reply);
     }
 
-    fn listxattr(&mut self, _request: &Request<'_>, inode: u64, size: u32, reply: ReplyXattr) {
+    fn listxattr(&self, _request: &Request, inode: INodeNo, size: u32, reply: ReplyXattr) {
         let result = self.xattrs(inode).map(|attributes| {
             let mut names = Vec::new();
             for (name, _) in attributes {
@@ -356,7 +368,7 @@ impl FuseFilesystem for ReadOnlyFilesystem {
         reply_xattr(result, size, reply);
     }
 
-    fn access(&mut self, _request: &Request<'_>, inode: u64, _mask: i32, reply: ReplyEmpty) {
+    fn access(&self, _request: &Request, inode: INodeNo, _mask: AccessFlags, reply: ReplyEmpty) {
         match self.inode(inode) {
             Ok(_) => reply.ok(),
             Err(error) => reply.error(error_code(&error)),
@@ -370,13 +382,14 @@ pub fn mount_read_only(
     size: u64,
     mountpoint: impl AsRef<Path>,
 ) -> io::Result<BackgroundSession> {
-    let options = [
+    let mut config = Config::default();
+    config.mount_options.extend([
         MountOption::RO,
         MountOption::DefaultPermissions,
         MountOption::FSName("erofs".to_string()),
         MountOption::Subtype("erofs".to_string()),
         MountOption::CUSTOM("nonempty".to_string()),
-    ];
+    ]);
     let configured = env::var_os("FUSERMOUNT_PROG")
         .map(PathBuf::from)
         .or_else(find_fusermount);
@@ -394,7 +407,7 @@ pub fn mount_read_only(
     let result = fuser::spawn_mount2(
         ReadOnlyFilesystem::new(file, offset, size)?,
         mountpoint,
-        &options,
+        &config,
     );
     drop(path_guard);
     result
@@ -527,15 +540,15 @@ fn erofs_error(error: fs_erofs::Error) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, error.to_string())
 }
 
-fn error_code(error: &io::Error) -> i32 {
-    error.raw_os_error().unwrap_or(libc::EIO)
+fn error_code(error: &io::Error) -> Errno {
+    Errno::from_i32(error.raw_os_error().unwrap_or(libc::EIO))
 }
 
 fn reply_xattr(result: io::Result<Vec<u8>>, size: u32, reply: ReplyXattr) {
     match result {
         Ok(value) if size == 0 => reply.size(value.len().try_into().unwrap_or(u32::MAX)),
         Ok(value) if size as usize >= value.len() => reply.data(&value),
-        Ok(_) => reply.error(libc::ERANGE),
+        Ok(_) => reply.error(Errno::ERANGE),
         Err(error) => reply.error(error_code(&error)),
     }
 }
@@ -555,13 +568,16 @@ mod tests {
         let path = temporary.path().join("bundle.erofs");
         std::fs::write(&path, &image).unwrap();
 
-        let mut filesystem =
+        let filesystem =
             ReadOnlyFilesystem::new(File::open(path).unwrap(), 0, image.len() as u64).unwrap();
-        let root = filesystem.inode(FUSE_ROOT_ID).unwrap();
+        let root = filesystem.inode(INodeNo::ROOT).unwrap();
         let file = filesystem.filesystem.lookup(&root, b"file").unwrap();
         let link = filesystem.filesystem.lookup(&root, b"link").unwrap();
-        let first = filesystem.inode_for(file.nid, FUSE_ROOT_ID);
-        assert_eq!(first, filesystem.inode_for(file.nid, FUSE_ROOT_ID));
+        let first = filesystem.inode_for(file.nid, INodeNo::ROOT).unwrap();
+        assert_eq!(
+            first,
+            filesystem.inode_for(file.nid, INodeNo::ROOT).unwrap()
+        );
         assert_eq!(file_type(file.file_type()), FileType::RegularFile);
         assert_eq!(file_type(link.file_type()), FileType::Symlink);
         let mut content = vec![0; file.size as usize];

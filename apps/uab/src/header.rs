@@ -232,7 +232,9 @@ impl MountedBundle {
 impl Drop for MountedBundle {
     fn drop(&mut self) {
         if let Some(session) = self.session.take() {
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| session.join()));
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                session.umount_and_join()
+            }));
         }
         if self.created {
             let _ = clear_path(&self.path);

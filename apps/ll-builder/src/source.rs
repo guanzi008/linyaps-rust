@@ -67,7 +67,7 @@ pub fn fetch_git_source(
 ) -> Result<()> {
     linyaps_core::tls::install_default_provider();
     if !output.join(".git").is_dir() {
-        let rust_result = gix::url::parse(url)
+        let rust_result = gix::url::parse(url.into())
             .map_err(anyhow::Error::from)
             .and_then(|url| clone_git_commit(&url, commit, output, recurse_submodules));
         if rust_result.is_ok() {
@@ -440,7 +440,7 @@ fn sha256_file(path: &Path) -> Result<String> {
         }
         hasher.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(linyaps_core::hex_encode(hasher.finalize()))
 }
 
 fn replace_with_link_or_copy(source: &Path, destination: &Path) -> Result<()> {
@@ -670,7 +670,7 @@ mod tests {
         publish_git(&repository, second);
 
         let output = temporary.path().join("checkout");
-        let url = gix::url::parse(remote_path.to_string_lossy().as_bytes()).unwrap();
+        let url = gix::url::parse(remote_path.to_string_lossy().as_bytes().into()).unwrap();
         clone_git_commit(&url, &first.to_string(), &output, false).unwrap();
 
         assert_eq!(fs::read(output.join("file.txt")).unwrap(), b"old\n");
@@ -768,7 +768,7 @@ mod tests {
         publish_git(&parent_repository, parent_commit);
 
         let output = temporary.path().join("checkout");
-        let url = gix::url::parse(parent_path.to_string_lossy().as_bytes()).unwrap();
+        let url = gix::url::parse(parent_path.to_string_lossy().as_bytes().into()).unwrap();
         clone_git_commit(&url, &parent_commit.to_string(), &output, true).unwrap();
 
         assert_eq!(

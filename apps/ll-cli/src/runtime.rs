@@ -2143,7 +2143,7 @@ fn apply_cdi_edits(
 fn container_id(config: &RunContextConfig) -> Result<String, String> {
     let mut hasher = Sha256::new();
     hasher.update(serde_json::to_vec(config).map_err(|error| error.to_string())?);
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(linyaps_core::hex_encode(hasher.finalize()))
 }
 
 fn rootfs_path(rootfs: &Path, path: &Path) -> Result<PathBuf, String> {
