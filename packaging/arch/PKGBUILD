@@ -24,6 +24,9 @@ makedepends=(
     pkgconf
     rust
 )
+checkdepends=(
+    dbus
+)
 options=(!lto !debug)
 install=linyaps-rust.install
 source=(
@@ -61,7 +64,7 @@ check() {
     cd "${srcdir}/${pkgname%-git}"
     export CARGO_TARGET_DIR=target
     export RUSTUP_TOOLCHAIN=stable
-    cargo test --offline --locked --workspace
+    dbus-run-session -- cargo test --offline --locked --workspace
 }
 
 package() {
