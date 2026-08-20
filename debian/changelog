@@ -1,3 +1,10 @@
+linyaps-rust (1.14.0~rust1-5) unstable; urgency=medium
+
+  * Align direct Rust crate dependencies with Debian sid.
+  * Keep Git HTTP transport on the pure-Rust crypto provider.
+
+ -- guanzi008 <20619190+guanzi008@users.noreply.github.com>  Fri, 21 Aug 2026 01:15:55 +0800
+
 linyaps-rust (1.14.0~rust1-4) unstable; urgency=medium
 
   * Keep repository configuration reads independent from package operations.
