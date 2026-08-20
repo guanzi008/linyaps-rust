@@ -372,7 +372,17 @@ mod tests {
                 & 0o777,
             0o755
         );
-        assert!(root.join("etc/profile.d/linglong.sh").is_file());
+        let profile = fs::read_to_string(root.join("etc/profile.d/linglong.sh")).unwrap();
+        let xsession = fs::read_to_string(root.join("etc/X11/Xsession.d/21linglong")).unwrap();
+        assert_eq!(profile, xsession);
+        assert_eq!(
+            profile,
+            include_str!("../../../misc/etc/profile.d/linglong.sh")
+        );
+        assert_eq!(
+            xsession,
+            include_str!("../../../misc/etc/X11/Xsession.d/21linglong")
+        );
         for language in ["de", "zh_CN", "zh_TW"] {
             let catalog = root
                 .join("usr/share/locale")

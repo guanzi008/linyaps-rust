@@ -1,3 +1,11 @@
+linyaps-rust (1.14.0~rust1-4) unstable; urgency=medium
+
+  * Keep repository configuration reads independent from package operations.
+  * Wait asynchronously when updating repository configuration.
+  * Fix driver searches failing with "repository is busy" during installs.
+
+ -- guanzi008 <20619190+guanzi008@users.noreply.github.com>  Mon, 17 Aug 2026 21:57:53 +0800
+
 linyaps-rust (1.14.0~rust1-3) unstable; urgency=medium
 
   * Reuse running containers before entering a sibling user namespace.

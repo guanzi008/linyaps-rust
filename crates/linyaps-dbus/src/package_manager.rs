@@ -526,8 +526,11 @@ impl PackageManagerClient {
     }
 }
 
-type GetConfiguration = dyn Fn() -> Result<RepoConfigV2, String> + Send + Sync + 'static;
-type SetConfiguration = dyn Fn(RepoConfigV2) -> Result<(), String> + Send + Sync + 'static;
+type GetConfigurationFuture =
+    Pin<Box<dyn Future<Output = Result<RepoConfigV2, String>> + Send + 'static>>;
+type GetConfiguration = dyn Fn() -> GetConfigurationFuture + Send + Sync + 'static;
+type SetConfigurationFuture = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'static>>;
+type SetConfiguration = dyn Fn(RepoConfigV2) -> SetConfigurationFuture + Send + Sync + 'static;
 type SearchFuture = Pin<
     Box<dyn Future<Output = Result<BTreeMap<String, Vec<PackageInfoV2>>, String>> + Send + 'static>,
 >;
@@ -570,13 +573,19 @@ pub struct PackageManagerService {
 }
 
 impl PackageManagerService {
-    pub fn new(
-        get_configuration: impl Fn() -> Result<RepoConfigV2, String> + Send + Sync + 'static,
-        set_configuration: impl Fn(RepoConfigV2) -> Result<(), String> + Send + Sync + 'static,
-    ) -> Self {
+    pub fn new<GetConfigurationFn, GetConfigurationFut, SetConfigurationFn, SetConfigurationFut>(
+        get_configuration: GetConfigurationFn,
+        set_configuration: SetConfigurationFn,
+    ) -> Self
+    where
+        GetConfigurationFn: Fn() -> GetConfigurationFut + Send + Sync + 'static,
+        GetConfigurationFut: Future<Output = Result<RepoConfigV2, String>> + Send + 'static,
+        SetConfigurationFn: Fn(RepoConfigV2) -> SetConfigurationFut + Send + Sync + 'static,
+        SetConfigurationFut: Future<Output = Result<(), String>> + Send + 'static,
+    {
         Self {
-            get_configuration: Arc::new(get_configuration),
-            set_configuration: Arc::new(set_configuration),
+            get_configuration: Arc::new(move || Box::pin(get_configuration())),
+            set_configuration: Arc::new(move |config| Box::pin(set_configuration(config))),
             search: None,
             install: None,
             install_file: None,
@@ -698,8 +707,9 @@ impl PackageManagerService {
 #[zbus::interface(name = "org.deepin.linglong.PackageManager1")]
 impl PackageManagerService {
     #[zbus(property)]
-    fn configuration(&self) -> zbus::fdo::Result<RepoConfigDict> {
+    async fn configuration(&self) -> zbus::fdo::Result<RepoConfigDict> {
         (self.get_configuration)()
+            .await
             .map(RepoConfigDict::from)
             .map_err(zbus::fdo::Error::Failed)
     }
@@ -714,7 +724,9 @@ impl PackageManagerService {
             &header,
         )
         .await?;
-        (self.set_configuration)(parameters.into()).map_err(zbus::fdo::Error::Failed)
+        (self.set_configuration)(parameters.into())
+            .await
+            .map_err(zbus::fdo::Error::Failed)
     }
 
     async fn search(
@@ -1392,6 +1404,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn configuration_waits_for_async_source() {
+        let expected = RepoConfigV2 {
+            default_repo: "stable".to_string(),
+            repos: vec![Repo {
+                alias: None,
+                mirror_enabled: None,
+                name: "stable".to_string(),
+                priority: 0,
+                url: "https://stable.example".to_string(),
+            }],
+            version: 2,
+        };
+        let (started_sender, started_receiver) = async_channel::bounded(1);
+        let (release_sender, release_receiver) = async_channel::bounded(1);
+        let getter_expected = expected.clone();
+        let service = Arc::new(PackageManagerService::new(
+            move || {
+                let started_sender = started_sender.clone();
+                let release_receiver = release_receiver.clone();
+                let expected = getter_expected.clone();
+                async move {
+                    started_sender
+                        .send(())
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    release_receiver
+                        .recv()
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    Ok(expected)
+                }
+            },
+            |_config| async { Ok(()) },
+        ));
+        let request_service = service.clone();
+        let request = tokio::spawn(async move { request_service.configuration().await });
+
+        started_receiver.recv().await.unwrap();
+        tokio::task::yield_now().await;
+        assert!(!request.is_finished());
+        release_sender.send(()).await.unwrap();
+
+        let observed = tokio::time::timeout(std::time::Duration::from_secs(1), request)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(RepoConfigV2::from(observed), expected);
+    }
+
+    #[tokio::test]
     async fn client_and_service_exchange_configuration_on_dbus() {
         let initial = RepoConfigV2 {
             default_repo: "stable".to_string(),
@@ -1412,10 +1475,16 @@ mod tests {
         let authorizations = Arc::new(Mutex::new(Vec::new()));
         let authorization_state = authorizations.clone();
         let service = PackageManagerService::new(
-            move || Ok(getter_state.lock().unwrap().clone()),
+            move || {
+                let getter_state = getter_state.clone();
+                async move { Ok(getter_state.lock().unwrap().clone()) }
+            },
             move |config| {
-                *setter_state.lock().unwrap() = config;
-                Ok(())
+                let setter_state = setter_state.clone();
+                async move {
+                    *setter_state.lock().unwrap() = config;
+                    Ok(())
+                }
             },
         )
         .with_search(|parameters, _| async move {

@@ -4,7 +4,7 @@ use std::io::ErrorKind;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -358,11 +358,13 @@ async fn create_service(root: &Path, use_polkit: bool) -> Result<PackageManagerS
     let repository = LocalRepository::create(root, default_config())
         .await
         .context("failed to create repository")?;
+    let configuration = Arc::new(RwLock::new(repository.config().clone()));
     let repository = Arc::new(Mutex::new(repository));
     start_deferred_uninstall(repository.clone());
-    let getter_repository = repository.clone();
+    let getter_configuration = configuration.clone();
     let setter_repository = repository.clone();
-    let search_repository = repository.clone();
+    let setter_configuration = configuration.clone();
+    let search_configuration = configuration;
     let install_repository = repository.clone();
     let install_file_repository = repository.clone();
     let uninstall_repository = repository.clone();
@@ -371,27 +373,39 @@ async fn create_service(root: &Path, use_polkit: bool) -> Result<PackageManagerS
     let prune_repository = repository;
     let service = PackageManagerService::new(
         move || {
-            getter_repository
-                .try_lock()
-                .ok_or_else(|| "repository is busy".to_string())
-                .map(|repository| repository.config().clone())
+            let configuration = getter_configuration.clone();
+            async move {
+                configuration
+                    .read()
+                    .map(|configuration| configuration.clone())
+                    .map_err(|error| error.to_string())
+            }
         },
         move |config| {
-            setter_repository
-                .try_lock()
-                .ok_or_else(|| "repository is busy".to_string())?
-                .update_config(config)
-                .map_err(|error| error.to_string())
+            let repository = setter_repository.clone();
+            let configuration = setter_configuration.clone();
+            async move {
+                repository
+                    .lock()
+                    .await
+                    .update_config(config.clone())
+                    .map_err(|error| error.to_string())?;
+                *configuration.write().map_err(|error| error.to_string())? = config;
+                Ok(())
+            }
         },
     )
     .with_search(move |parameters, context| {
-        let repository = search_repository.clone();
+        let configuration = search_configuration.clone();
         async move {
             let fuzzy = parameters
                 .id
                 .parse::<FuzzyReference>()
                 .map_err(|error| error.to_string())?;
-            let config = repository.lock().await.config().clone();
+            let config = configuration
+                .read()
+                .map(|configuration| configuration.clone())
+                .map_err(|error| error.to_string())?;
             let mut packages = std::collections::BTreeMap::new();
             for alias in parameters.repos {
                 context
