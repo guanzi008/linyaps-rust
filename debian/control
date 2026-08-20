@@ -23,7 +23,7 @@ Build-Depends-Arch:
  librust-fuser-0.17+abi-7-31-dev (>= 0.17.0-~~),
  librust-futures-lite-2+default-dev (>= 2.6.1-~~),
  librust-gix-0.83+basic-dev (>= 0.83.0-~~),
- librust-gix-0.83+blocking-http-transport-reqwest-rust-tls-dev (>= 0.83.0-~~),
+ librust-gix-0.83+blocking-http-transport-reqwest-dev (>= 0.83.0-~~),
  librust-gix-0.83+comfort-dev (>= 0.83.0-~~),
  librust-gix-0.83+sha1-dev (>= 0.83.0-~~),
  librust-gix-0.83+worktree-mutation-dev (>= 0.83.0-~~),
