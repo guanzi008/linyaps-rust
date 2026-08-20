@@ -1,0 +1,20 @@
+_info() {
+    printf '%s\n' \
+        ':: linyaps getting started:' \
+        ':: linyaps 入门:' \
+        '   English: https://linyaps.org.cn/en/guide/start/whatis.html' \
+        '   简中: https://linyaps.org.cn/guide/start/whatis.html'
+}
+
+post_install() {
+    _info
+}
+
+post_upgrade() {
+    _info
+    systemctl try-restart org.deepin.linglong.PackageManager.service 2>/dev/null || true
+}
+
+pre_remove() {
+    systemctl stop org.deepin.linglong.PackageManager.service 2>/dev/null || true
+}

@@ -73,4 +73,10 @@ dpkg-buildpackage --build=binary --no-sign
 `linglong-builder` 是可选的开发工具包；运行应用只需 `linglong-bin` 与
 配套仓库发布的 `linglong-box`。
 
+## Arch Linux 包
+
+`packaging/arch/` 包含可直接同步到 AUR 的 VCS 包配方。配方通过
+`ll-system-helper install` 生成完整系统布局，不再手工复制部分文件；因此
+会同时安装 X11 会话脚本、systemd 环境生成器、helper 入口和本地化目录。
+
 许可证为 `LGPL-3.0-or-later`；随仓库保留了冻结上游的完整 REUSE 许可证集合。

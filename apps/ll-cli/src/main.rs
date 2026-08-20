@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::ffi::{CStr, CString, OsStr};
 use std::fs;
+use std::ops::Deref;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
@@ -32,11 +33,25 @@ mod cli11;
 mod frozen_help;
 mod localized_help;
 mod namespace;
+mod polkit_agent;
 mod runtime;
 #[cfg(feature = "wayland-security-context")]
 mod wayland_security;
 
 const PACKAGE_MANAGER_USER: &str = "deepin-linglong";
+
+struct ManagedPackageManagerClient {
+    client: PackageManagerAsyncClient,
+    _polkit_agent: Option<polkit_agent::TtyPolkitAgent>,
+}
+
+impl Deref for ManagedPackageManagerClient {
+    type Target = PackageManagerAsyncClient;
+
+    fn deref(&self) -> &Self::Target {
+        &self.client
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -799,13 +814,21 @@ fn repository_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/var/lib/linglong"))
 }
 
-async fn package_manager_client(no_dbus: bool) -> Result<PackageManagerAsyncClient, String> {
+async fn package_manager_client(no_dbus: bool) -> Result<ManagedPackageManagerClient, String> {
     if !no_dbus {
-        return PackageManagerAsyncClient::system()
+        let client = PackageManagerAsyncClient::system()
             .await
-            .map_err(|error| error.to_string());
+            .map_err(|error| error.to_string())?;
+        let polkit_agent = polkit_agent::TtyPolkitAgent::start();
+        return Ok(ManagedPackageManagerClient {
+            client,
+            _polkit_agent: polkit_agent,
+        });
     }
-    initialize_peer_package_manager().await
+    Ok(ManagedPackageManagerClient {
+        client: initialize_peer_package_manager().await?,
+        _polkit_agent: None,
+    })
 }
 
 async fn initialize_peer_package_manager() -> Result<PackageManagerAsyncClient, String> {

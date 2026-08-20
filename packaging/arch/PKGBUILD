@@ -1,0 +1,78 @@
+# Maintainer: taotieren <admin@taotieren.com>
+
+pkgname=linyaps-rust-git
+pkgver=1.14.0.rust.1.r6.g38b279b
+pkgrel=1
+pkgdesc="Command-compatible Rust implementation of the Linyaps package manager"
+arch=($CARCH)
+url="https://github.com/guanzi008/linyaps-rust"
+license=('LGPL-3.0-or-later')
+provides=(linyaps-rust linyaps)
+conflicts=(linyaps-rust linyaps)
+depends=(
+    desktop-file-utils
+    erofs-utils
+    fuse-overlayfs
+    hicolor-icon-theme
+    linyaps-box-rust
+    polkit
+    shared-mime-info
+    systemd
+)
+makedepends=(
+    git
+    pkgconf
+    rust
+)
+options=(!lto !debug)
+install=linyaps-rust.install
+source=(
+    "git+${url}.git"
+    linyaps-rust.install
+)
+sha256sums=(
+    'SKIP'
+    'a039bf2eae4edd966b0fda535f637251a99a9e8b09a712be20d1d4db41a1cf86'
+)
+
+pkgver() {
+    cd "${srcdir}/${pkgname%-git}"
+    git describe --long --tag --abbrev=7 2>/dev/null |
+        sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' ||
+        printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+    git -C "${srcdir}/${pkgname%-git}" clean -dfx
+    cd "${srcdir}/${pkgname%-git}"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo fetch --locked
+}
+
+build() {
+    cd "${srcdir}/${pkgname%-git}"
+    export CARGO_TARGET_DIR=target
+    export RUSTUP_TOOLCHAIN=stable
+    cargo build --offline --locked --release --workspace --exclude ll-init
+    cargo rustc --offline --locked --release --package ll-init -- -C target-feature=+crt-static
+}
+
+check() {
+    cd "${srcdir}/${pkgname%-git}"
+    export CARGO_TARGET_DIR=target
+    export RUSTUP_TOOLCHAIN=stable
+    cargo test --offline --locked --workspace
+}
+
+package() {
+    cd "${srcdir}/${pkgname%-git}"
+    target/release/ll-system-helper install \
+        --destdir "${pkgdir}" \
+        --prefix /usr \
+        --binary-dir target/release
+    install -vDm0644 debian/linglong.conf -t "${pkgdir}/usr/lib/sysctl.d/"
+    install -vDm0644 debian/*.1 -t "${pkgdir}/usr/share/man/man1/"
+    install -vDm0644 ./*.md -t "${pkgdir}/usr/share/doc/${pkgname}/"
+    install -vDm0644 LICENSE -t "${pkgdir}/usr/share/licenses/${pkgname}/"
+    cp -rv LICENSES "${pkgdir}/usr/share/licenses/${pkgname}/"
+}
