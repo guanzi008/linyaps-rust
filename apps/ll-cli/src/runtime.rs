@@ -23,11 +23,10 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::{
-    Run, format_package_manager_error, oci_runtime_binary, package_manager_client,
-    process_state_root, xdg_runtime_dir,
+    Run, oci_runtime_binary, process_state_root, xdg_runtime_dir,
 };
 
-pub(super) async fn run(options: Run, no_dbus: bool) -> Result<(), String> {
+pub(super) async fn run(options: Run) -> Result<(), String> {
     let repository = super::open_local_repository().await?;
     let runtime_config = runtime_config::load_runtime_config(
         &options.app,
@@ -61,12 +60,8 @@ pub(super) async fn run(options: Run, no_dbus: bool) -> Result<(), String> {
         .join(&target_item.commit)
         .join(&container_id);
     let process_args = process_arguments(&options, &app_info)?;
-    let package_manager = package_manager_client(no_dbus).await?;
-    package_manager
-        .init_run_context(&run_context_json, &container_id)
-        .await
-        .map_err(format_package_manager_error)?;
-    drop(package_manager);
+    crate::run_context::initialize(&repository, &run_context_json, &container_id)
+        .map_err(|error| format!("failed to initialize run context: {error:#}"))?;
     if options.run_context.is_none() && !crate::namespace::has_effective_sys_admin()? {
         let startup_lock = match acquire_startup_lock_or_reuse(&container_id, &process_args)? {
             StartupLock::New(lock) => lock,

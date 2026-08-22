@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File};
 use std::path::Path;
 use std::sync::Arc;
@@ -15,13 +15,11 @@ use linyaps_api::{
 use linyaps_core::repo_lock::RepoLock;
 use linyaps_core::repository::priority_grouped_repos;
 use linyaps_core::{Architecture, FuzzyReference, Reference};
-use linyaps_dbus::{TaskCompletion, TaskContext, VariantMap, common_result, owned_string};
-use linyaps_repository::{
+use crate::{
     LocalRepository, RemotePackages, RemoteRefMetadata, RemoteRepositoryClient, UabFile,
-    read_layer_info_from, reference_from_info, unpack_layer_file,
+    read_layer_info_from, reference_from_info, unpack_layer_file, install_hooks::InstallHooks,
 };
-
-use crate::install_hooks::InstallHooks;
+use crate::operation_context::{OperationContext, OperationResult};
 
 pub type SharedRepository = Arc<Mutex<LocalRepository>>;
 
@@ -88,11 +86,11 @@ struct GatheredUpdate {
 pub async fn install(
     repository: SharedRepository,
     parameters: PackageManagerInstallParameters,
-    context: TaskContext,
-) -> Result<TaskCompletion, String> {
+    context: OperationContext,
+) -> Result<OperationResult, String> {
     match install_inner(repository, parameters, context).await {
         Ok(completion) => Ok(completion),
-        Err(error) => Ok(TaskCompletion::failed(error.code, error.message)),
+        Err(error) => Ok(OperationResult::failed(error.code, error.message)),
     }
 }
 
@@ -101,10 +99,10 @@ pub async fn install_file(
     file: File,
     file_type: String,
     options: CommonOptions,
-    context: TaskContext,
-) -> Result<TaskCompletion, String> {
+    context: OperationContext,
+) -> Result<OperationResult, String> {
     if let Err(error) = InstallHooks::load().and_then(|hooks| hooks.pre_install(&file)) {
-        return Ok(TaskCompletion::failed(
+        return Ok(OperationResult::failed(
             INSTALL_FAILED,
             format!("install hook verification failed: {error:#}"),
         ));
@@ -119,7 +117,7 @@ pub async fn install_file(
     };
     match result {
         Ok(completion) => Ok(completion),
-        Err(error) => Ok(TaskCompletion::failed(error.code, error.message)),
+        Err(error) => Ok(OperationResult::failed(error.code, error.message)),
     }
 }
 
@@ -127,8 +125,8 @@ async fn install_uab_inner(
     repository: SharedRepository,
     file: File,
     options: CommonOptions,
-    context: TaskContext,
-) -> Result<TaskCompletion, OperationError> {
+    context: OperationContext,
+) -> Result<OperationResult, OperationError> {
     let uab = UabFile::from_file(file)
         .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
     uab.verify()
@@ -217,30 +215,22 @@ async fn install_uab_inner(
         })
         && !options.skip_interaction
     {
-        let mut additional = VariantMap::new();
+        let mut additional = HashMap::<String, String>::new();
         additional.insert(
             "LocalRef".to_string(),
-            owned_string(
-                local
-                    .as_ref()
-                    .expect("upgrade has local reference")
-                    .to_string(),
-            ),
+            local
+                .as_ref()
+                .expect("upgrade has local reference")
+                .to_string(),
         );
-        additional.insert("RemoteRef".to_string(), owned_string(target.to_string()));
-        if !context
-            .request_interaction(InteractionMessageType::Upgrade as i32, additional)
-            .await
-            .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?
+        additional.insert("RemoteRef".to_string(), target.to_string());
+        if !context.request_interaction(InteractionMessageType::Upgrade as i32, &additional)
         {
-            return Ok(TaskCompletion::canceled("action canceled"));
+            return Ok(OperationResult::canceled("action canceled"));
         }
     }
 
-    context
-        .update_progress(10.0, "installing uab")
-        .await
-        .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+    context.update_progress(10.0, "installing uab");
     let work = repository.root().join("tmp").join(format!(
         "install-uab-{}-{}",
         std::process::id(),
@@ -264,10 +254,7 @@ async fn install_uab_inner(
         } else {
             Vec::new()
         };
-        context
-            .update_progress(15.0, "checking uab dependencies")
-            .await
-            .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+        context.update_progress(15.0, "checking uab dependencies");
         if executable_mode {
             let app_info = &app_layers[0].info;
             ensure_dependency(&mut repository, &app_info.base, &app_info.channel, &context).await?;
@@ -285,10 +272,7 @@ async fn install_uab_inner(
                     .await?;
                 }
             }
-            context
-                .update_progress(35.0, "importing application layers")
-                .await
-                .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+            context.update_progress(35.0, "importing application layers");
             import_uab_layers(
                 &mut repository,
                 &work,
@@ -349,7 +333,7 @@ async fn install_uab_inner(
     }
     result?;
     let message = "install uab successfully";
-    Ok(TaskCompletion::new(message, common_result(0, message)))
+    Ok(OperationResult::success(message))
 }
 
 fn validate_uab_group(layers: &[UabLayer]) -> Result<(), OperationError> {
@@ -553,8 +537,8 @@ async fn install_layer_inner(
     repository: SharedRepository,
     mut file: File,
     options: CommonOptions,
-    context: TaskContext,
-) -> Result<TaskCompletion, OperationError> {
+    context: OperationContext,
+) -> Result<OperationResult, OperationError> {
     let layer_info = read_layer_info_from(&mut file)
         .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
     let package_info: PackageInfoV2 = serde_json::from_value(layer_info.info)
@@ -601,23 +585,17 @@ async fn install_layer_inner(
         if target.version.partial_cmp(&installed.version) == Some(Ordering::Greater)
             && !options.skip_interaction
         {
-            let mut additional = VariantMap::new();
-            additional.insert("LocalRef".to_string(), owned_string(installed.to_string()));
-            additional.insert("RemoteRef".to_string(), owned_string(target.to_string()));
-            let accepted = context
-                .request_interaction(InteractionMessageType::Upgrade as i32, additional)
-                .await
-                .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+            let mut additional = HashMap::<String, String>::new();
+            additional.insert("LocalRef".to_string(), installed.to_string());
+            additional.insert("RemoteRef".to_string(), target.to_string());
+            let accepted = context.request_interaction(InteractionMessageType::Upgrade as i32, &additional);
             if !accepted {
-                return Ok(TaskCompletion::canceled("action canceled"));
+                return Ok(OperationResult::canceled("action canceled"));
             }
         }
     }
 
-    context
-        .update_progress(10.0, "installing layer")
-        .await
-        .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+    context.update_progress(10.0, "installing layer");
     let work = repository.root().join("tmp").join(format!(
         "install-layer-{}-{}",
         std::process::id(),
@@ -631,10 +609,7 @@ async fn install_layer_inner(
     let result = async {
         unpack_layer_file(&mut file, &work)
             .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
-        context
-            .update_progress(30.0, "installing application dependencies")
-            .await
-            .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+        context.update_progress(30.0, "installing application dependencies");
         if package_info.kind == "app"
             && matches!(package_info.module.as_str(), "binary" | "runtime")
         {
@@ -656,10 +631,7 @@ async fn install_layer_inner(
             }
         }
 
-        context
-            .update_progress(60.0, "importing layer")
-            .await
-            .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+        context.update_progress(60.0, "importing layer");
         repository
             .import_layer_dir(&work, &[], None)
             .await
@@ -715,14 +687,14 @@ async fn install_layer_inner(
     result?;
 
     let message = "install layer successfully";
-    Ok(TaskCompletion::new(message, common_result(0, message)))
+    Ok(OperationResult::success(message))
 }
 
 async fn install_inner(
     repository: SharedRepository,
     parameters: PackageManagerInstallParameters,
-    context: TaskContext,
-) -> Result<TaskCompletion, OperationError> {
+    context: OperationContext,
+) -> Result<OperationResult, OperationError> {
     let architecture = Architecture::current()
         .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
     let mut fuzzy = FuzzyReference::new(
@@ -751,10 +723,7 @@ async fn install_inner(
         .all(|module| !matches!(module.as_str(), "binary" | "runtime"));
 
     let mut repository = repository.lock().await;
-    context
-        .update_state_message(format!("Installing {} - Preparing...", fuzzy.id))
-        .await
-        .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+    context.update_state_message(&format!("Installing {} - Preparing...", fuzzy.id));
     let mut local = latest_local_reference(&repository, &fuzzy)?;
     if extra_only {
         let installed = local.as_ref().ok_or_else(|| {
@@ -812,23 +781,18 @@ async fn install_inner(
         target.version.partial_cmp(&installed.version) == Some(Ordering::Greater)
     });
     if upgrading && !parameters.options.skip_interaction {
-        let mut additional = VariantMap::new();
+        let mut additional = HashMap::<String, String>::new();
         additional.insert(
             "LocalRef".to_string(),
-            owned_string(
-                local
-                    .as_ref()
-                    .expect("upgrade has local reference")
-                    .to_string(),
-            ),
+            local
+                .as_ref()
+                .expect("upgrade has local reference")
+                .to_string(),
         );
-        additional.insert("RemoteRef".to_string(), owned_string(target.to_string()));
-        let accepted = context
-            .request_interaction(InteractionMessageType::Upgrade as i32, additional)
-            .await
-            .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+        additional.insert("RemoteRef".to_string(), target.to_string());
+        let accepted = context.request_interaction(InteractionMessageType::Upgrade as i32, &additional);
         if !accepted {
-            return Ok(TaskCompletion::canceled("action canceled"));
+            return Ok(OperationResult::canceled("action canceled"));
         }
     }
 
@@ -900,10 +864,7 @@ async fn install_inner(
     let install_result = async {
         for plan in &planned {
             let task_message = format!("Installing {}/{}", plan.reference, plan.module);
-            context
-                .update_state_message(&task_message)
-                .await
-                .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+            context.update_state_message(&task_message);
             install_remote_module(
                 &mut repository,
                 &plan.reference,
@@ -947,25 +908,25 @@ async fn install_inner(
         target,
         selection.repo.effective_name()
     );
-    Ok(TaskCompletion::new(&message, common_result(0, &message)))
+    Ok(OperationResult::success(message))
 }
 
 pub async fn uninstall(
     repository: SharedRepository,
     parameters: PackageManagerUninstallParameters,
-    context: TaskContext,
-) -> Result<TaskCompletion, String> {
+    context: OperationContext,
+) -> Result<OperationResult, String> {
     match uninstall_inner(repository, parameters, context).await {
         Ok(completion) => Ok(completion),
-        Err(error) => Ok(TaskCompletion::failed(error.code, error.message)),
+        Err(error) => Ok(OperationResult::failed(error.code, error.message)),
     }
 }
 
 async fn uninstall_inner(
     repository: SharedRepository,
     parameters: PackageManagerUninstallParameters,
-    context: TaskContext,
-) -> Result<TaskCompletion, OperationError> {
+    context: OperationContext,
+) -> Result<OperationResult, OperationError> {
     let mut repository = repository.lock().await;
     let candidates = matching_main_layers(&repository, &parameters.package)?;
     if candidates.is_empty() {
@@ -1000,10 +961,7 @@ async fn uninstall_inner(
         .to_string();
     let may_have_unused_dependencies =
         info.kind == "app" && matches!(module.as_str(), "binary" | "runtime");
-    context
-        .update_state_message(format!("Uninstalling {reference}"))
-        .await
-        .map_err(|error| OperationError::new(UNINSTALL_FAILED, error.to_string()))?;
+    context.update_state_message(&format!("Uninstalling {reference}"));
     if matches!(module.as_str(), "binary" | "runtime") {
         if info.kind == "app" {
             repository
@@ -1031,17 +989,17 @@ async fn uninstall_inner(
     .await;
     merge_modules_best_effort(&mut repository);
     let message = format!("Uninstall {reference} {module} success");
-    Ok(TaskCompletion::new(&message, common_result(0, &message)))
+    Ok(OperationResult::success(message))
 }
 
 pub async fn update(
     repository: SharedRepository,
     parameters: PackageManagerUpdateParameters,
-    context: TaskContext,
-) -> Result<TaskCompletion, String> {
+    context: OperationContext,
+) -> Result<OperationResult, String> {
     match update_inner(repository, parameters, context).await {
         Ok(completion) => Ok(completion),
-        Err(error) => Ok(TaskCompletion::failed(error.code, error.message)),
+        Err(error) => Ok(OperationResult::failed(error.code, error.message)),
     }
 }
 
@@ -1252,8 +1210,8 @@ fn enabled_extension_name(name: &str) -> Option<String> {
 async fn update_inner(
     repository: SharedRepository,
     parameters: PackageManagerUpdateParameters,
-    context: TaskContext,
-) -> Result<TaskCompletion, OperationError> {
+    context: OperationContext,
+) -> Result<OperationResult, OperationError> {
     let mut repository = repository.lock().await;
     let installed_apps = installed_apps(&repository)?;
     let apps = if parameters.packages.is_empty() {
@@ -1278,15 +1236,12 @@ async fn update_inner(
             "No apps to upgrade",
         ));
     }
-    context
-        .update_state_message("Updating applications")
-        .await
-        .map_err(|error| OperationError::new(UPDATE_FAILED, error.to_string()))?;
+    context.update_state_message("Updating applications");
     let mut succeeded = 0usize;
     let mut repository_changed = false;
     for (reference, info) in apps {
         if context.is_canceled() {
-            return Ok(TaskCompletion::canceled("task was cancelled"));
+            return Ok(OperationResult::canceled("task was cancelled"));
         }
         match update_app(
             &mut repository,
@@ -1302,13 +1257,10 @@ async fn update_inner(
                 repository_changed |= changed;
             }
             Err(error) => {
-                context
-                    .send_message(format!(
+                context.send_message(&format!(
                         "failed to update app {}: {}",
                         reference.id, error.message
-                    ))
-                    .await
-                    .map_err(|bus| OperationError::new(UPDATE_FAILED, bus.to_string()))?;
+                    ));
             }
         }
     }
@@ -1323,7 +1275,7 @@ async fn update_inner(
         prune_after_change(&mut repository, !parameters.no_auto_prune.unwrap_or(false)).await;
     }
     let message = "Update applications success";
-    Ok(TaskCompletion::new(message, common_result(0, message)))
+    Ok(OperationResult::success(message))
 }
 
 async fn update_app(
@@ -1331,13 +1283,10 @@ async fn update_app(
     local: &Reference,
     old_info: &PackageInfoV2,
     dependencies_only: bool,
-    context: &TaskContext,
+    context: &OperationContext,
 ) -> Result<bool, OperationError> {
     let checking_message = format!("Checking for updates {}", local.id);
-    context
-        .reset_progress(&checking_message)
-        .await
-        .map_err(|error| OperationError::new(UPDATE_FAILED, error.to_string()))?;
+    context.reset_progress(&checking_message);
     let mut planned = Vec::new();
     let mut new_reference = None;
     let mut app_info = old_info.clone();
@@ -1397,10 +1346,7 @@ async fn update_app(
     let result = async {
         for plan in &planned {
             let task_message = format!("Updating {}/{}", plan.reference, plan.module);
-            context
-                .update_state_message(&task_message)
-                .await
-                .map_err(|error| OperationError::new(UPDATE_FAILED, error.to_string()))?;
+            context.update_state_message(&task_message);
             install_remote_module(
                 repository,
                 &plan.reference,
@@ -1469,7 +1415,7 @@ async fn ensure_dependency(
     repository: &mut LocalRepository,
     raw: &str,
     channel: &str,
-    context: &TaskContext,
+    context: &OperationContext,
 ) -> Result<(), OperationError> {
     if raw.is_empty() {
         return Ok(());
@@ -1496,10 +1442,7 @@ async fn ensure_dependency(
         }
     }
     let task_message = format!("Installing {reference}/binary");
-    context
-        .update_state_message(&task_message)
-        .await
-        .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+    context.update_state_message(&task_message);
     install_remote_module(
         repository,
         &reference,
@@ -1804,7 +1747,7 @@ async fn install_remote_module(
     remote: &Repo,
     module: &str,
     error_code: i64,
-    context: &TaskContext,
+    context: &OperationContext,
     download: &mut DownloadProgress,
     task_message: &str,
 ) -> Result<(), OperationError> {
@@ -1831,10 +1774,7 @@ async fn install_remote_module(
             if download.total_size > 0 && download.needed_size > 0 {
                 let progress =
                     (download.fetched_size as f64 * 100.0 / download.needed_size as f64).min(100.0);
-                context
-                    .update_progress(progress, task_message)
-                    .await
-                    .map_err(|error| OperationError::new(error_code, error.to_string()))?;
+                context.update_progress(progress, task_message);
             }
         }
         Ok::<(), OperationError>(())

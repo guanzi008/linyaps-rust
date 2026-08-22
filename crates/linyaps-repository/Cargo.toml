@@ -7,6 +7,9 @@ license.workspace = true
 description = "Pure Rust OSTree repository backend for Linyaps"
 
 [dependencies]
+anyhow.workspace = true
+async-channel.workspace = true
+async-lock.workspace = true
 fs-core.workspace = true
 fs-erofs.workspace = true
 futures-lite.workspace = true

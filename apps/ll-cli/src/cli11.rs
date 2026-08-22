@@ -37,7 +37,6 @@ pub fn parse(arguments: &[OsString]) -> Result<Cli, ParseError> {
         help_all: false,
         version: false,
         json: false,
-        no_dbus: false,
         verbose: 0,
         no_progress: false,
         command: None,
@@ -228,10 +227,6 @@ fn parse_global(
         }
         "--json" => {
             cli.json = true;
-            return Ok(Some(1));
-        }
-        "--no-dbus" => {
-            cli.no_dbus = true;
             return Ok(Some(1));
         }
         "--no-progress" => {

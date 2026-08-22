@@ -1,19 +1,17 @@
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeMap, HashSet};
 use std::env;
-use std::ffi::{CStr, CString, OsStr};
 use std::fs;
-use std::ops::Deref;
-use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
-use std::time::Duration;
+use std::sync::Arc;
 
+use async_lock::Mutex;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use linyaps_api::{
-    CliContainer, CommonOptions, CommonResult, ContainerProcessStateInfo, LayerInfo,
+    CliContainer, CommonOptions, ContainerProcessStateInfo, LayerInfo,
     PackageInfoDisplay, PackageInfoV2, PackageManagerInstallPackage,
-    PackageManagerInstallParameters, PackageManagerPackage, PackageManagerSearchParameters,
+    PackageManagerInstallParameters, PackageManagerPackage,
     PackageManagerUninstallParameters, PackageManagerUpdateParameters, RepoConfigV2,
     UpgradeListResult,
 };
@@ -23,9 +21,9 @@ use linyaps_core::{
     Architecture, FuzzyReference, Reference, RepoOperation, RepoOperationResult, Version,
     apply_repo_operation,
 };
-use linyaps_dbus::{PackageManagerAsyncClient, PackageManagerError, VariantMap};
 use linyaps_repository::{
-    LocalRepository, RemotePackages, RemoteRepositoryClient, read_layer_info,
+    LocalRepository, OperationContext, OperationResult, RemotePackages, RemoteRepositoryClient,
+    operations, read_layer_info,
 };
 
 mod analysis;
@@ -33,25 +31,10 @@ mod cli11;
 mod frozen_help;
 mod localized_help;
 mod namespace;
-mod polkit_agent;
 mod runtime;
+mod run_context;
 #[cfg(feature = "wayland-security-context")]
 mod wayland_security;
-
-const PACKAGE_MANAGER_USER: &str = "deepin-linglong";
-
-struct ManagedPackageManagerClient {
-    client: PackageManagerAsyncClient,
-    _polkit_agent: Option<polkit_agent::TtyPolkitAgent>,
-}
-
-impl Deref for ManagedPackageManagerClient {
-    type Target = PackageManagerAsyncClient;
-
-    fn deref(&self) -> &Self::Target {
-        &self.client
-    }
-}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -63,12 +46,10 @@ impl Deref for ManagedPackageManagerClient {
 struct Cli {
     #[arg(long = "help-all", global = true)]
     help_all: bool,
-    #[arg(long)]
+    #[arg(long, hide = true)]
     version: bool,
     #[arg(long)]
     json: bool,
-    #[arg(long, hide = true)]
-    no_dbus: bool,
     #[arg(short = 'v', long, action = clap::ArgAction::Count)]
     verbose: u8,
     #[arg(long)]
@@ -431,12 +412,12 @@ async fn main() {
         std::process::exit(-1);
     };
     let result = match command {
-        Command::Repo(repo) => run_repo(repo.command, cli.json, cli.no_dbus).await,
-        Command::Search(search) => run_search(search, cli.json, cli.no_dbus).await,
-        Command::Run(run) => runtime::run(run, cli.no_dbus).await,
-        Command::Install(install) => run_install(install, cli.json, cli.no_dbus).await,
-        Command::Uninstall(uninstall) => run_uninstall(uninstall, cli.json, cli.no_dbus).await,
-        Command::Upgrade(upgrade) => run_upgrade(upgrade, cli.json, cli.no_dbus).await,
+        Command::Repo(repo) => run_repo(repo.command, cli.json).await,
+        Command::Search(search) => run_search(search, cli.json).await,
+        Command::Run(run) => runtime::run(run).await,
+        Command::Install(install) => run_install(install, cli.json).await,
+        Command::Uninstall(uninstall) => run_uninstall(uninstall, cli.json).await,
+        Command::Upgrade(upgrade) => run_upgrade(upgrade, cli.json).await,
         Command::List(list) => run_list(list, cli.json).await,
         Command::Info(app) => run_info(app, cli.json).await,
         Command::Content(app) => run_content(app, cli.json).await,
@@ -444,7 +425,7 @@ async fn main() {
         Command::Ps(options) => run_ps(options, cli.json),
         Command::Enter(options) => run_enter(options),
         Command::Kill(options) => run_kill(options),
-        Command::Prune => run_prune(cli.json, cli.no_dbus).await,
+        Command::Prune => run_prune(cli.json).await,
         Command::Analyze(analyze) => analysis::run(analyze, cli.json).await,
     };
     if let Err(error) = result {
@@ -457,10 +438,11 @@ async fn main() {
     }
 }
 
-async fn run_prune(json: bool, no_dbus: bool) -> Result<(), String> {
-    let client = package_manager_client(no_dbus).await?;
-    let result = client.prune().await.map_err(format_package_manager_error)?;
-    let packages = result.packages.unwrap_or_default();
+async fn run_prune(json: bool) -> Result<(), String> {
+    let repository = Arc::new(Mutex::new(open_local_repository().await?));
+    let packages = operations::prune(repository)
+        .await
+        .map_err(|error| error.to_string())?;
     if json {
         println!(
             "{}",
@@ -486,17 +468,13 @@ async fn run_prune(json: bool, no_dbus: bool) -> Result<(), String> {
     Ok(())
 }
 
-async fn run_repo(command: RepoCommand, json: bool, no_dbus: bool) -> Result<(), String> {
-    let client = package_manager_client(no_dbus).await?;
-    let mut config = client
-        .configuration()
-        .await
-        .map_err(|error| error.to_string())?;
+async fn run_repo(command: RepoCommand, json: bool) -> Result<(), String> {
+    let mut repository = open_local_repository().await?;
+    let mut config = repository.config().clone();
     match apply_repo_operation(&mut config, command.into()).map_err(|error| error.to_string())? {
         RepoOperationResult::Unchanged => Ok(()),
-        RepoOperationResult::Changed => client
-            .set_configuration(config)
-            .await
+        RepoOperationResult::Changed => repository
+            .update_config(config)
             .map_err(|error| error.to_string()),
         RepoOperationResult::Show(config) => {
             if json {
@@ -512,7 +490,7 @@ async fn run_repo(command: RepoCommand, json: bool, no_dbus: bool) -> Result<(),
     }
 }
 
-async fn run_install(options: Install, json: bool, no_dbus: bool) -> Result<(), String> {
+async fn run_install(options: Install, json: bool) -> Result<(), String> {
     let path = Path::new(&options.app);
     if path.exists() {
         if !path.is_file() {
@@ -530,21 +508,23 @@ async fn run_install(options: Install, json: bool, no_dbus: bool) -> Result<(), 
                 "Unsupported file format .{file_type}; expected a .layer or .uab file."
             ));
         }
-        let client = package_manager_client(no_dbus).await?;
-        let result = client
-            .install_file_with_interaction(
-                path,
-                file_type,
-                CommonOptions {
-                    force: options.force,
-                    no_auto_prune: Some(options.no_auto_prune),
-                    skip_interaction: options.confirm,
-                },
-                confirm_interaction,
-            )
-            .await
-            .map_err(|error| format_install_error(error, &options.app))?;
-        return print_task_result(&result, json);
+        let file = std::fs::File::open(path)
+            .map_err(|error| format!("failed to open {}: {error}", path.display()))?;
+        let repository = Arc::new(Mutex::new(open_local_repository().await?));
+        let context = OperationContext::new();
+        let result = operations::install_file(
+            repository,
+            file,
+            file_type.to_string(),
+            CommonOptions {
+                force: options.force,
+                no_auto_prune: Some(options.no_auto_prune),
+                skip_interaction: options.confirm,
+            },
+            context,
+        )
+        .await;
+        return print_operation_result(result, json);
     }
     if path.is_absolute() || options.app.starts_with("./") || options.app.starts_with("../") {
         return Err(format!("Package file {} does not exist.", options.app));
@@ -571,16 +551,13 @@ async fn run_install(options: Install, json: bool, no_dbus: bool) -> Result<(), 
         },
         repo: options.repo,
     };
-    let client = package_manager_client(no_dbus).await?;
-    let app_id = parameters.package.id.clone();
-    let result = client
-        .install_with_interaction(parameters, confirm_interaction)
-        .await
-        .map_err(|error| format_install_error(error, &app_id))?;
-    print_task_result(&result, json)
+    let repository = Arc::new(Mutex::new(open_local_repository().await?));
+    let context = OperationContext::new();
+    let result = operations::install(repository, parameters, context).await;
+    print_operation_result(result, json)
 }
 
-async fn run_uninstall(options: Uninstall, json: bool, no_dbus: bool) -> Result<(), String> {
+async fn run_uninstall(options: Uninstall, json: bool) -> Result<(), String> {
     let _legacy_compatibility_flags = (options.prune, options.all);
     let fuzzy = options
         .app
@@ -599,15 +576,13 @@ async fn run_uninstall(options: Uninstall, json: bool, no_dbus: bool) -> Result<
             version: fuzzy.version,
         },
     };
-    let client = package_manager_client(no_dbus).await?;
-    let result = client
-        .uninstall(parameters)
-        .await
-        .map_err(format_uninstall_error)?;
-    print_task_result(&result, json)
+    let repository = Arc::new(Mutex::new(open_local_repository().await?));
+    let context = OperationContext::new();
+    let result = operations::uninstall(repository, parameters, context).await;
+    print_operation_result(result, json)
 }
 
-async fn run_upgrade(options: Upgrade, json: bool, no_dbus: bool) -> Result<(), String> {
+async fn run_upgrade(options: Upgrade, json: bool) -> Result<(), String> {
     let packages = if let Some(app) = options.app {
         let fuzzy = app
             .parse::<FuzzyReference>()
@@ -631,16 +606,19 @@ async fn run_upgrade(options: Upgrade, json: bool, no_dbus: bool) -> Result<(), 
     } else {
         Vec::new()
     };
-    let client = package_manager_client(no_dbus).await?;
-    let result = client
-        .update(PackageManagerUpdateParameters {
+    let repository = Arc::new(Mutex::new(open_local_repository().await?));
+    let context = OperationContext::new();
+    let result = operations::update(
+        repository,
+        PackageManagerUpdateParameters {
             deps_only: options.deps_only,
             no_auto_prune: Some(options.no_auto_prune),
             packages,
-        })
-        .await
-        .map_err(format_upgrade_error)?;
-    print_task_result(&result, json)
+        },
+        context,
+    )
+    .await;
+    print_operation_result(result, json)
 }
 
 fn auto_module_list() -> Vec<String> {
@@ -693,113 +671,17 @@ fn language_modules(language: &str) -> Vec<String> {
     }
 }
 
-fn confirm_interaction(message_id: i32, additional: &VariantMap) -> bool {
-    if message_id != 4 {
-        return false;
-    }
-    let local = additional
-        .get("LocalRef")
-        .and_then(|value| <&str>::try_from(value).ok())
-        .unwrap_or("unknown");
-    let remote = additional
-        .get("RemoteRef")
-        .and_then(|value| <&str>::try_from(value).ok())
-        .unwrap_or("unknown");
-    eprint!(
-        "The lower version {local} is currently installed. Do you want to continue installing the latest version {remote}? [y/N] "
-    );
-    let mut answer = String::new();
-    std::io::stdin().read_line(&mut answer).is_ok()
-        && matches!(answer.trim(), "Y" | "y" | "Yes" | "yes")
-}
-
-fn print_task_result(result: &CommonResult, json: bool) -> Result<(), String> {
+fn print_operation_result(result: Result<OperationResult, String>, json: bool) -> Result<(), String> {
+    let result = result?;
     if json {
         println!(
             "{}",
-            serde_json::to_string(result).map_err(|error| error.to_string())?
+            serde_json::to_string(&result).map_err(|error| error.to_string())?
         );
     } else if !result.message.is_empty() {
         println!("{}", result.message);
     }
     Ok(())
-}
-
-fn format_package_manager_error(error: PackageManagerError) -> String {
-    match error {
-        PackageManagerError::Task { code, message } => common_task_error(code).unwrap_or(message),
-        error => error.to_string(),
-    }
-}
-
-fn format_install_error(error: PackageManagerError, app_id: &str) -> String {
-    let PackageManagerError::Task { code, message } = error else {
-        return error.to_string();
-    };
-    match code {
-        1000 | 2001 => linyaps_i18n::gettext("Install failed").into_owned(),
-        2002 => linyaps_i18n::format("Application {} is not found in remote repo.", &[&app_id]),
-        2003 => linyaps_i18n::gettext("Application already installed").into_owned(),
-        2004 => linyaps_i18n::format(
-            "The latest version has been installed. If you want to replace it, try using 'll-cli install {} --force'",
-            &[&app_id],
-        ),
-        2005 => {
-            linyaps_i18n::gettext("Cannot specify a version when installing a module.").into_owned()
-        }
-        2006 => linyaps_i18n::gettext("To install the module, one must first install the app.")
-            .into_owned(),
-        2007 => linyaps_i18n::gettext("Module is already installed.").into_owned(),
-        2009 => linyaps_i18n::gettext("The module could not be found remotely.").into_owned(),
-        _ => common_task_error(code).unwrap_or(message),
-    }
-}
-
-fn format_uninstall_error(error: PackageManagerError) -> String {
-    let PackageManagerError::Task { code, message } = error else {
-        return error.to_string();
-    };
-    match code {
-        1000 | 2101 => linyaps_i18n::gettext("Uninstall failed").into_owned(),
-        2102 => linyaps_i18n::gettext("Application is not installed.").into_owned(),
-        2103 => linyaps_i18n::gettext(
-            "The application is currently running and cannot be uninstalled. Please turn off the application and try again.",
-        )
-        .into_owned(),
-        2105 => linyaps_i18n::format(
-            "Multiple versions of the package are installed. Please specify a single version to uninstall:\n{}",
-            &[&message],
-        ),
-        2106 => linyaps_i18n::gettext(
-            "Base or runtime cannot be uninstalled, please use 'll-cli prune'.",
-        )
-        .into_owned(),
-        _ => common_task_error(code).unwrap_or(message),
-    }
-}
-
-fn format_upgrade_error(error: PackageManagerError) -> String {
-    let PackageManagerError::Task { code, message } = error else {
-        return error.to_string();
-    };
-    match code {
-        1000 | 2201 => linyaps_i18n::gettext("Upgrade failed").into_owned(),
-        2202 => linyaps_i18n::gettext("Application is not installed.").into_owned(),
-        _ => common_task_error(code).unwrap_or(message),
-    }
-}
-
-fn common_task_error(code: i64) -> Option<String> {
-    let message = match code {
-        1 => "Operation canceled",
-        2 => "Permission denied, authentication is required",
-        2104 => "Package not found",
-        3001 => {
-            "Network connection failed. Please:\n1. Check your internet connection\n2. Verify network proxy settings if used"
-        }
-        _ => return None,
-    };
-    Some(linyaps_i18n::gettext(message).into_owned())
 }
 
 async fn open_local_repository() -> Result<LocalRepository, String> {
@@ -811,145 +693,22 @@ async fn open_local_repository() -> Result<LocalRepository, String> {
 fn repository_root() -> PathBuf {
     env::var_os("LINGLONG_ROOT")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/var/lib/linglong"))
+        .unwrap_or_else(|| {
+            let data_dir = std::env::var_os("XDG_DATA_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    let home = std::env::var_os("HOME")
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| PathBuf::from("/"));
+                    home.join(".local").join("share")
+                });
+            data_dir.join("linglong")
+        })
 }
 
-async fn package_manager_client(no_dbus: bool) -> Result<ManagedPackageManagerClient, String> {
-    if !no_dbus {
-        let client = PackageManagerAsyncClient::system()
-            .await
-            .map_err(|error| error.to_string())?;
-        let polkit_agent = polkit_agent::TtyPolkitAgent::start();
-        return Ok(ManagedPackageManagerClient {
-            client,
-            _polkit_agent: polkit_agent,
-        });
-    }
-    Ok(ManagedPackageManagerClient {
-        client: initialize_peer_package_manager().await?,
-        _polkit_agent: None,
-    })
-}
-
-async fn initialize_peer_package_manager() -> Result<PackageManagerAsyncClient, String> {
-    let allow_unprivileged = env::var_os("LINGLONG_PEER_ALLOW_UNPRIVILEGED").is_some();
-    if rustix::process::getuid().as_raw() != 0 && !allow_unprivileged {
-        return Err("--no-dbus should only be used by root user.".to_string());
-    }
-    let direct = env::var_os("LINGLONG_PACKAGE_MANAGER_DIRECT").is_some();
-    let socket_dir = prepare_peer_socket_dir(!direct)?;
-    let socket_path = socket_dir.0.join("package-manager.socket");
-    let package_manager = env::var_os("LINGLONG_PACKAGE_MANAGER")
-        .map(PathBuf::from)
-        .unwrap_or_else(default_package_manager_executable);
-    let mut command = if direct {
-        let mut command = ProcessCommand::new(&package_manager);
-        command.env("USER", PACKAGE_MANAGER_USER);
-        command
-    } else {
-        let mut command = ProcessCommand::new("sudo");
-        command
-            .arg("--user")
-            .arg(PACKAGE_MANAGER_USER)
-            .arg("--preserve-env=QT_FORCE_STDERR_LOGGING")
-            .arg("--preserve-env=QDBUS_DEBUG")
-            .arg(&package_manager);
-        command
-    };
-    let mut child = command
-        .arg("--no-dbus")
-        .arg("--peer-socket")
-        .arg(&socket_path)
-        .spawn()
-        .map_err(|error| format!("Failed to start ll-package-manager: {error}"))?;
-
-    let mut last_error = String::new();
-    for _ in 0..50 {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        match PackageManagerAsyncClient::peer(&socket_path).await {
-            Ok(client) => {
-                client
-                    .configuration()
-                    .await
-                    .map_err(|error| format!("Failed to initialize peer connection: {error}"))?;
-                let _ = fs::remove_file(&socket_path);
-                return Ok(client);
-            }
-            Err(error) => last_error = error.to_string(),
-        }
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("failed to inspect ll-package-manager: {error}"))?
-        {
-            return Err(format!(
-                "ll-package-manager exited with {status}: {last_error}"
-            ));
-        }
-    }
-    Err(format!(
-        "Failed to connect to ll-package-manager: {last_error}"
-    ))
-}
-
-fn default_package_manager_executable() -> PathBuf {
-    if let Ok(current) = env::current_exe()
-        && let Some(parent) = current.parent()
-    {
-        let sibling = parent.join("ll-package-manager");
-        if sibling.is_file() {
-            return sibling;
-        }
-    }
-    PathBuf::from("/usr/libexec/linglong/ll-package-manager")
-}
-
-fn prepare_peer_socket_dir(change_owner: bool) -> Result<PeerSocketDirectory, String> {
-    let mut template = b"/tmp/linglong-package-manager-XXXXXX\0".to_vec();
-    let path = unsafe { libc::mkdtemp(template.as_mut_ptr().cast()) };
-    if path.is_null() {
-        return Err(format!(
-            "failed to create peer socket directory: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    let path = unsafe { CStr::from_ptr(path) };
-    let directory = PeerSocketDirectory(PathBuf::from(OsStr::from_bytes(path.to_bytes())));
-    if !change_owner {
-        return Ok(directory);
-    }
-    let username = CString::new(PACKAGE_MANAGER_USER).expect("static user name");
-    let user = unsafe { libc::getpwnam(username.as_ptr()) };
-    if user.is_null() {
-        return Err(format!(
-            "failed to get user info for {PACKAGE_MANAGER_USER}"
-        ));
-    }
-    let directory_name = CString::new(directory.0.as_os_str().as_bytes())
-        .map_err(|_| "peer socket directory contains a NUL byte".to_string())?;
-    let result = unsafe { libc::chown(directory_name.as_ptr(), (*user).pw_uid, (*user).pw_gid) };
-    if result != 0 {
-        return Err(format!(
-            "failed to change peer socket directory owner: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    Ok(directory)
-}
-
-struct PeerSocketDirectory(PathBuf);
-
-impl Drop for PeerSocketDirectory {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
-async fn run_search(options: Search, json: bool, no_dbus: bool) -> Result<(), String> {
-    let client = package_manager_client(no_dbus).await?;
-    let config = client
-        .configuration()
-        .await
-        .map_err(|error| error.to_string())?;
+async fn run_search(options: Search, json: bool) -> Result<(), String> {
+    let repository = open_local_repository().await?;
+    let config = repository.config().clone();
     let mut repos = config.repos;
     repos.sort_by_key(|repo| Reverse(repo.priority));
     if repos.is_empty() {
@@ -962,17 +721,22 @@ async fn run_search(options: Search, json: bool, no_dbus: bool) -> Result<(), St
         }
     }
     FuzzyReference::new(None, &options.keywords, None, None).map_err(|error| error.to_string())?;
-    let aliases = repos
-        .into_iter()
-        .map(|repo| repo.effective_name().to_string())
-        .collect();
-    let mut packages = client
-        .search(PackageManagerSearchParameters {
-            id: options.keywords.clone(),
-            repos: aliases,
-        })
-        .await
-        .map_err(|error| error.to_string())?;
+    let mut packages = BTreeMap::new();
+    for repo in &repos {
+        let client = RemoteRepositoryClient::new(&repo.url)
+            .map_err(|error| error.to_string())?;
+        let fuzzy = FuzzyReference::new(None, &options.keywords, None, None)
+            .map_err(|error| error.to_string())?;
+        match client.search_packages(&fuzzy, repo, true).await {
+            Ok(found) if !found.is_empty() => {
+                packages.insert(repo.effective_name().to_string(), found);
+            }
+            Ok(_) => {}
+            Err(error) => {
+                eprintln!("failed to search {}: {error}", options.keywords);
+            }
+        }
+    }
     print_search_results(&mut packages, &options, json)
 }
 
@@ -1832,6 +1596,21 @@ fn character_display_width(character: char) -> usize {
         2
     } else {
         1
+    }
+}
+
+#[cfg(test)]
+fn default_config() -> linyaps_api::RepoConfigV2 {
+    linyaps_api::RepoConfigV2 {
+        default_repo: "stable".to_string(),
+        repos: vec![linyaps_api::Repo {
+            alias: None,
+            mirror_enabled: None,
+            name: "stable".to_string(),
+            priority: 0,
+            url: "https://mirror-repo-linglong.deepin.com".to_string(),
+        }],
+        version: 2,
     }
 }
 

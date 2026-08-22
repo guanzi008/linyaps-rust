@@ -1,12 +1,16 @@
 mod cache;
+mod install_hooks;
 mod layer_file;
 mod local;
+mod operation_context;
+pub mod operations;
 mod remote;
 mod tar;
 mod uab;
 mod writer;
 
 pub use cache::{CACHE_VERSION, CacheError, RepositoryCacheStore};
+pub use install_hooks::InstallHooks;
 pub use layer_file::{
     LayerFileError, read_layer_info, read_layer_info_from, unpack_erofs_file, unpack_layer,
     unpack_layer_file,
@@ -15,6 +19,7 @@ pub use local::{
     ImportedLayer, LocalRepository, RefStatistics, RemoteRefMetadata, RepositoryError, ostree_ref,
     reference_from_info,
 };
+pub use operation_context::{OperationContext, OperationResult};
 pub use remote::{
     ApiResponse, FuzzySearchRequest, NewUploadTask, PulledLayer, RemoteError, RemotePackage,
     RemotePackages, RemoteRepositoryClient, SignInData, UploadStatus,

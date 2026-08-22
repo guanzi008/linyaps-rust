@@ -4,12 +4,10 @@ members = [
     "apps/ll-cli",
     "apps/ll-driver-detect",
     "apps/ll-init",
-    "apps/ll-package-manager",
     "apps/ll-system-helper",
     "apps/uab",
     "crates/linyaps-api",
     "crates/linyaps-core",
-    "crates/linyaps-dbus",
     "crates/linyaps-i18n",
     "crates/linyaps-repository",
 ]
@@ -38,7 +36,6 @@ goblin = "0.10.3"
 libc = "0.2.177"
 linyaps-api = { path = "crates/linyaps-api" }
 linyaps-core = { path = "crates/linyaps-core" }
-linyaps-dbus = { path = "crates/linyaps-dbus" }
 linyaps-i18n = { path = "crates/linyaps-i18n" }
 linyaps-repository = { path = "crates/linyaps-repository" }
 lzma-rs = "0.3.0"

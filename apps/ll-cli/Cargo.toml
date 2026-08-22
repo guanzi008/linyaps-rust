@@ -23,10 +23,11 @@ name = "llpkg"
 path = "src/bin/llpkg.rs"
 
 [dependencies]
+anyhow.workspace = true
+async-lock.workspace = true
 clap.workspace = true
 linyaps-api.workspace = true
 linyaps-core.workspace = true
-linyaps-dbus.workspace = true
 linyaps-i18n.workspace = true
 linyaps-repository.workspace = true
 libc.workspace = true
