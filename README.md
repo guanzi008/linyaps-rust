@@ -5,21 +5,32 @@
 
 仓库不包含 C、C++、Go、Python 或汇编实现源码，也不调用原项目二进制。构建器按协议执行用户构建命令和系统工具；`misc` 中的 shell 文件是桌面/系统集成资源，不是替代实现。
 
+## 架构说明
+
+本项目是**单用户、每用户仓库**模型，与上游的多用户共享仓库 + D-Bus 服务模型不同：
+
+- 每个用户的已安装应用存放在自己的目录：`$XDG_DATA_HOME/linglong`
+  （默认 `~/.local/share/linglong`），可用 `LINGLONG_ROOT` 覆盖。
+- 不再有 `ll-package-manager` 常驻服务，不再需要 `deepin-linglong` 系统
+  用户、D-Bus 系统服务、polkit 鉴权或 sysusers/tmpfiles 集成。
+- 安装、卸载、升级、搜索、清理等操作由 `ll-cli` 通过
+  `linyaps-repository` crate 直接完成，进程内并发由 `RepoLock` 文件锁保证。
+- 保留 XDG Desktop Portal（session bus）客户端调用，用于图形应用的
+  Documents 挂载，不依赖任何包管理守护进程。
+
 ## 功能范围
 
 - `ll-cli` / `llpkg`：运行、进程管理、安装、卸载、升级、搜索、列表、仓库、信息、内容、清理和分析。
 - `ll-builder`：项目校验、源码获取、依赖解析、容器构建、模块拆分、导入、导出、推送及 UAB 生成。
-- `ll-package-manager`：完整 D-Bus/peer 服务、任务、交互、策略、安装、升级、卸载、清理和运行上下文。
-- `linyaps-repository`：纯 Rust OSTree 兼容存储、远端传输、缓存、迁移、layer/UAB 导入导出及 EROFS。
+- `linyaps-repository`：纯 Rust OSTree 兼容存储、远端传输、缓存、迁移、layer/UAB 导入导出、EROFS 及安装/卸载/升级/清理操作。
 - 运行时：OCI 配置、CDI、扩展、Wayland/XDG、进程状态和 `ll-box` 调用链。
-- 系统组件：`ll-init`、驱动检测、systemd、D-Bus、polkit、sysusers、tmpfiles、shell 补全及 97 份本地化目录。
+- 系统组件：`ll-init`、驱动检测、systemd 环境生成器、shell 补全及 97 份本地化目录。
 
 完整兼容范围、冻结行为和验证清单见 [`COMPATIBILITY.md`](COMPATIBILITY.md)。配套 OCI 运行时位于独立仓库 `linyaps-box-rust`。
 
-运行应用要求内核启用非特权用户命名空间。系统仓库层通常由
-`deepin-linglong` 服务账号持有，此时 `ll-cli` 会自动选择
-`fuse-overlayfs` 并将层内属主映射到当前用户；本地用户持有的层可直接使用
-内核 OverlayFS。Debian 包已声明 `fuse-overlayfs` 为运行依赖。
+运行应用要求内核启用非特权用户命名空间。单用户模式下层由当前用户持有，
+可直接使用内核 OverlayFS；`fuse-overlayfs` 仍作为运行依赖声明，用于
+需要属主映射的场景。
 
 ## 构建测试
 
@@ -69,6 +80,10 @@ dpkg-buildpackage --build=binary --no-sign
 符号拆分及校验和均由 Debian 工具链管理；发布新版本时应先更新
 `debian/changelog`。`ll-init` 由打包规则使用目标架构的静态 GNU libc
 重新链接，安装器仍会验证它没有动态解释器或动态依赖。
+
+包不再安装 `ll-package-manager` 守护进程及其 D-Bus/polkit/sysusers/tmpfiles
+集成；`linglong-bin` 只安装 CLI、运行时和系统集成资源。包内的维护者脚本
+仍会刷新 desktop/mime 数据库并重载 systemd。
 
 `linglong-builder` 是可选的开发工具包；运行应用只需 `linglong-bin` 与
 配套仓库发布的 `linglong-box`。

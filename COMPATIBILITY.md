@@ -7,18 +7,29 @@
 - 对外版本：`1.14.0-dev`
 - 配套运行时提交：`OpenAtom-Linyaps/linyaps-box@2f6023b609f500b756b558bf0b87be4e504c53f5`
 
-兼容判断以冻结提交的实际可执行行为、输出、D-Bus 接口、磁盘格式和安装布局为准，而不是后续上游分支。
+兼容判断以冻结提交的实际可执行行为、输出、磁盘格式和安装布局为准，而不是后续上游分支。
+
+## 与上游的有意分歧
+
+本项目采用**单用户、每用户仓库**模型，因此**不提供**以下上游接口：
+
+- `ll-package-manager` 守护进程及 `org.deepin.linglong.PackageManager1`
+  D-Bus 系统服务（含 Task1、peer 服务、任务排队、交互、polkit 鉴权）。
+- `deepin-linglong` 系统用户、sysusers/tmpfiles 集成。
+
+对应的功能（安装、卸载、升级、搜索、清理、仓库配置）由 `ll-cli` 直接调用
+`linyaps-repository` 的 `operations` 模块完成，CLI 行为保持与冻结版本兼容。
+仓库默认位于 `$XDG_DATA_HOME/linglong`（`LINGLONG_ROOT` 可覆盖）。
 
 ## 已覆盖接口
 
-- 所有冻结可执行名：`ll-cli`、`llpkg`、`ll-builder`、`ll-builder-export`、`ll-driver-detect`、`ll-init`、`ll-package-manager`、`ll-system-helper`、`uab-header`、`uab-loader`。
+- 冻结可执行名：`ll-cli`、`llpkg`、`ll-builder`、`ll-builder-export`、`ll-driver-detect`、`ll-init`、`ll-system-helper`、`uab-header`、`uab-loader`。
 - `ll-cli` 和 `ll-builder` 的命令、别名、短参数、错误码、帮助、版本、表格/JSON 输出及本地化文本。
-- PackageManager1、Task1、peer 服务、属性、信号、任务排队、交互、polkit 与直接模式。
 - 本地和远端 OSTree 对象、引用、提交、checkout、缓存、迁移、删除恢复、prune、上传及下载。
 - layer 文件、UAB ELF section、签名数据、纯 Rust EROFS 读写、校验和压缩格式。
 - builder 项目、依赖、源码、Debian source、模块、容器、检查、导入、导出和推送流程。
 - OCI 运行配置、CDI、扩展、Wayland、XDG、字体/动态链接缓存、应用配置和进程状态。
-- systemd、D-Bus、polkit、sysusers、tmpfiles、MIME、desktop、图标、补全、profile 和 97 份 locale 安装布局。
+- systemd 环境生成器、MIME、desktop、图标、补全、profile 和 97 份 locale 安装布局。
 
 没有保留调用冻结 C++ 程序的后备路径。Debian source 对内建格式使用 Rust 实现；冻结实现本来就委托 `dpkg-source` 的其他格式仍按相同协议调用系统工具。
 
