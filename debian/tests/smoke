@@ -6,11 +6,7 @@ ll-builder --version
 ll-builder-export --help >/dev/null
 
 test -x /usr/libexec/linglong/ll-init
-test -x /usr/libexec/linglong/ll-package-manager
 test -x /usr/lib/linglong/builder/uab/uab-header
-test -f /usr/lib/systemd/system/org.deepin.linglong.PackageManager.service
-test -f /usr/lib/sysusers.d/linglong.conf
-test -f /usr/lib/tmpfiles.d/linglong.conf
 
 if readelf -l /usr/libexec/linglong/ll-init \
     | grep -qE 'INTERP|Requesting program interpreter'; then

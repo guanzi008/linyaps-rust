@@ -86,7 +86,6 @@ X-Cargo-Crates:
  ll-cli,
  ll-driver-detect,
  ll-init,
- ll-package-manager,
  ll-system-helper,
 Depends:
  desktop-file-utils,

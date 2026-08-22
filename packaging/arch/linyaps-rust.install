@@ -12,9 +12,8 @@ post_install() {
 
 post_upgrade() {
     _info
-    systemctl try-restart org.deepin.linglong.PackageManager.service 2>/dev/null || true
 }
 
 pre_remove() {
-    systemctl stop org.deepin.linglong.PackageManager.service 2>/dev/null || true
+    true
 }

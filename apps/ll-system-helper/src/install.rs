@@ -39,36 +39,12 @@ macro_rules! asset_prefix {
 
 const ASSETS: &[Asset] = &[
     asset_prefix!(
-        "lib/systemd/system/org.deepin.linglong.PackageManager.service",
-        "../../../misc/lib/systemd/system/org.deepin.linglong.PackageManager.service"
-    ),
-    asset_prefix!(
         "lib/systemd/system-preset/91-linglong.preset",
         "../../../misc/lib/systemd/system-preset/91-linglong.preset"
     ),
     asset_prefix!(
-        "lib/sysusers.d/linglong.conf",
-        "../../../misc/lib/sysusers.d/linglong.conf"
-    ),
-    asset_prefix!(
-        "lib/tmpfiles.d/linglong.conf",
-        "../../../misc/lib/tmpfiles.d/linglong.conf"
-    ),
-    asset_prefix!(
         "lib/linglong/container/README.md",
         "../../../misc/lib/linglong/container/README.md"
-    ),
-    asset_prefix!(
-        "share/dbus-1/system-services/org.deepin.linglong.PackageManager1.service",
-        "../../../misc/share/dbus-1/system-services/org.deepin.linglong.PackageManager1.service"
-    ),
-    asset_prefix!(
-        "share/dbus-1/system.d/org.deepin.linglong.PackageManager1.conf",
-        "../../../misc/share/dbus-1/system.d/org.deepin.linglong.PackageManager1.conf"
-    ),
-    asset_prefix!(
-        "share/polkit-1/actions/org.deepin.linglong.PackageManager1.policy",
-        "../../../misc/share/polkit-1/actions/org.deepin.linglong.PackageManager1.policy"
     ),
     asset_prefix!(
         "share/linglong/config.yaml",
@@ -200,7 +176,6 @@ fn install_layout(
             ("ll-builder-export", "bin/ll-builder-export"),
             ("ll-driver-detect", "libexec/linglong/ll-driver-detect"),
             ("ll-init", "libexec/linglong/ll-init"),
-            ("ll-package-manager", "libexec/linglong/ll-package-manager"),
             ("uab-header", "lib/linglong/builder/uab/uab-header"),
             ("uab-loader", "lib/linglong/builder/uab/uab-loader"),
         ] {
@@ -320,7 +295,6 @@ mod tests {
             "ll-builder-export",
             "ll-driver-detect",
             "ll-init",
-            "ll-package-manager",
             "uab-header",
             "uab-loader",
         ] {
@@ -330,15 +304,7 @@ mod tests {
         fs::write(&helper, "helper").unwrap();
         let root = temporary.path().join("root");
         install_layout(&root, Path::new("/usr"), &binaries, &helper, None, false).unwrap();
-        let service = fs::read_to_string(
-            root.join("usr/lib/systemd/system/org.deepin.linglong.PackageManager.service"),
-        )
-        .unwrap();
-        assert!(service.contains("User=deepin-linglong"));
-        assert!(service.contains("ExecStart=/usr/libexec/linglong/ll-package-manager"));
-        assert!(!service.contains('@'));
         assert!(root.join("usr/bin/ll-cli").is_file());
-        assert!(root.join("usr/bin/ll-builder-export").is_file());
         assert!(
             root.join("usr/lib/linglong/builder/uab/uab-header")
                 .is_file()

@@ -6,36 +6,8 @@ case "$1" in
     *) exit 0 ;;
 esac
 
-if command -v systemd-sysusers >/dev/null 2>&1; then
-    systemd-sysusers ${DPKG_ROOT:+--root="$DPKG_ROOT"} linglong.conf || true
-fi
-if command -v systemd-tmpfiles >/dev/null 2>&1; then
-    systemd-tmpfiles ${DPKG_ROOT:+--root="$DPKG_ROOT"} --create linglong.conf >/dev/null || true
-fi
-
-if [ -z "${DPKG_ROOT:-}" ] && command -v deb-systemd-helper >/dev/null 2>&1; then
-    deb-systemd-helper --user disable linglong-session-helper.service >/dev/null || true
-    deb-systemd-helper --user purge linglong-session-helper.service >/dev/null || true
-fi
-
 if [ -z "${DPKG_ROOT:-}" ] && [ -d /run/systemd/system ]; then
-    if command -v deb-systemd-helper >/dev/null 2>&1; then
-        deb-systemd-helper unmask org.deepin.linglong.PackageManager.service >/dev/null || true
-        if deb-systemd-helper --quiet was-enabled org.deepin.linglong.PackageManager.service; then
-            deb-systemd-helper enable org.deepin.linglong.PackageManager.service >/dev/null || true
-        else
-            deb-systemd-helper update-state org.deepin.linglong.PackageManager.service >/dev/null || true
-        fi
-    fi
     systemctl --system daemon-reload >/dev/null || true
-    if [ -n "${2:-}" ]; then
-        action=restart
-    else
-        action=start
-    fi
-    if command -v deb-systemd-invoke >/dev/null 2>&1; then
-        deb-systemd-invoke "$action" org.deepin.linglong.PackageManager.service >/dev/null || true
-    fi
 fi
 
 if [ -z "${DPKG_ROOT:-}" ]; then
