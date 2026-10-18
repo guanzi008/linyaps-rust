@@ -27,7 +27,7 @@ complete -c ll-builder -f -n "__fish_seen_subcommand_from run" -s f -l file -l m
 complete -c ll-builder -f -n "__fish_seen_subcommand_from run" -l extensions -a "(__ll_builder_get_refs)"
 
 # 6. Export options
-complete -c ll-builder -f -n "__fish_seen_subcommand_from export" -s f -l file -l icon -l layer -l loader -l no-develop -s o -l output -l modules
+complete -c ll-builder -f -n "__fish_seen_subcommand_from export" -s f -l file -l icon -l layer -l uabx -l loader -l no-develop -s o -l output -l modules
 complete -c ll-builder -f -n "__fish_seen_subcommand_from export" -s z -l compressor -a "lz4 lzma zstd"
 complete -c ll-builder -f -n "__fish_seen_subcommand_from export" -l ref -a "(__ll_builder_get_refs)"
 
@@ -39,9 +39,10 @@ complete -c ll-builder -f -n "__fish_seen_subcommand_from remove" -a "(__ll_buil
 complete -c ll-builder -f -n "__fish_seen_subcommand_from push" -s f -l file -l repo-url -l repo-name -l module
 
 # 9. Repo subcommands and arguments
-complete -c ll-builder -f -n "__fish_seen_subcommand_from repo" -a "add remove update set-default show enable-mirror disable-mirror"
-set -l repo_sub_needs_name remove update set-default enable-mirror disable-mirror
+complete -c ll-builder -f -n "__fish_seen_subcommand_from repo" -a "add remove update set-default show set-priority enable-mirror disable-mirror"
+set -l repo_sub_needs_name remove update set-default set-priority enable-mirror disable-mirror
 complete -c ll-builder -f -n "__fish_seen_subcommand_from repo; and __fish_seen_subcommand_from $repo_sub_needs_name" -a "(__ll_builder_get_repos)"
+complete -c ll-builder -f -n "__fish_seen_subcommand_from repo; and __fish_seen_subcommand_from enable-mirror" -l region
 
 # 10. File completions for specific commands
 complete -c ll-builder -f -n "__fish_seen_subcommand_from import extract" -a "(ls *.layer 2>/dev/null)"

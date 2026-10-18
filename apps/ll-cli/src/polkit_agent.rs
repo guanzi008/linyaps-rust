@@ -17,7 +17,7 @@ pub(crate) struct TtyPolkitAgent {
 }
 
 impl TtyPolkitAgent {
-    pub(crate) fn start() -> Option<Self> {
+    pub(crate) fn start(system_bus_name: Option<&str>) -> Option<Self> {
         if !io::stdin().is_terminal() {
             return None;
         }
@@ -25,7 +25,7 @@ impl TtyPolkitAgent {
         let child_readiness_fd = child_readiness.as_raw_fd();
         let mut command = Command::new(PKTTYAGENT);
         command
-            .args(arguments(std::process::id()))
+            .args(arguments(std::process::id(), system_bus_name))
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::null());
@@ -61,14 +61,24 @@ impl Drop for TtyPolkitAgent {
     }
 }
 
-fn arguments(process_id: u32) -> [OsString; 5] {
-    [
-        OsString::from("--process"),
-        OsString::from(process_id.to_string()),
+fn arguments(process_id: u32, system_bus_name: Option<&str>) -> Vec<OsString> {
+    let mut arguments = if let Some(system_bus_name) = system_bus_name {
+        vec![
+            OsString::from("--system-bus-name"),
+            OsString::from(system_bus_name),
+        ]
+    } else {
+        vec![
+            OsString::from("--process"),
+            OsString::from(process_id.to_string()),
+        ]
+    };
+    arguments.extend([
         OsString::from("--notify-fd"),
         OsString::from(NOTIFY_FD.to_string()),
         OsString::from("--fallback"),
-    ]
+    ]);
+    arguments
 }
 
 fn duplicate_notify_fd(source: RawFd) -> io::Result<()> {
@@ -101,8 +111,23 @@ mod tests {
     #[test]
     fn registers_for_the_calling_process() {
         assert_eq!(
-            arguments(42),
-            ["--process", "42", "--notify-fd", "3", "--fallback",].map(OsString::from)
+            arguments(42, None),
+            ["--process", "42", "--notify-fd", "3", "--fallback"].map(OsString::from)
+        );
+    }
+
+    #[test]
+    fn prefers_the_calling_system_bus_name() {
+        assert_eq!(
+            arguments(42, Some(":1.23")),
+            [
+                "--system-bus-name",
+                ":1.23",
+                "--notify-fd",
+                "3",
+                "--fallback",
+            ]
+            .map(OsString::from)
         );
     }
 }

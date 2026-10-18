@@ -1,6 +1,5 @@
 use std::env;
-use std::fs::{self, File};
-use std::os::fd::AsRawFd;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -69,21 +68,10 @@ impl InstallHooks {
         Ok(hooks)
     }
 
-    pub fn pre_install(&self, file: &File) -> Result<()> {
+    pub fn pre_install(&self, path: &Path) -> Result<()> {
         if self.pre_install.is_empty() {
             return Ok(());
         }
-        let link = PathBuf::from(format!(
-            "/proc/{}/fd/{}",
-            std::process::id(),
-            file.as_raw_fd()
-        ));
-        let path = fs::read_link(&link).with_context(|| {
-            format!(
-                "failed to resolve install file descriptor {}",
-                link.display()
-            )
-        })?;
         execute(
             &self.pre_install,
             &[("LINGLONG_UAB_PATH", path.as_os_str())],

@@ -17,7 +17,7 @@ use linyaps_api::BuilderProject;
 pub async fn import_path(repository: &mut LocalRepository, path: &Path) -> Result<()> {
     if path.is_dir() {
         repository
-            .import_layer_dir(path, &[], None)
+            .import_layer_dir(path, &[])
             .await
             .with_context(|| format!("Import layer directory failed: {}", path.display()))?;
         repository.merge_modules()?;
@@ -41,7 +41,7 @@ pub async fn import_path(repository: &mut LocalRepository, path: &Path) -> Resul
         return Err(error);
     }
     let result = repository
-        .import_layer_dir(&temporary, &[], None)
+        .import_layer_dir(&temporary, &[])
         .await
         .with_context(|| format!("Import layer failed: {}", path.display()));
     let _ = clear_path(&temporary);

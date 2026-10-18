@@ -3,10 +3,14 @@ use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::ffi::{CStr, CString, OsStr};
 use std::fs;
+use std::io::{self, Write};
 use std::ops::Deref;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::Command as ProcessCommand;
+use std::process::{Command as ProcessCommand, ExitStatus};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -40,6 +44,36 @@ mod wayland_security;
 
 const PACKAGE_MANAGER_USER: &str = "deepin-linglong";
 
+#[derive(Debug)]
+struct CliCommandError {
+    message: String,
+    exit_code: Option<i32>,
+}
+
+impl CliCommandError {
+    fn message(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            exit_code: None,
+        }
+    }
+
+    fn from_status(message: impl Into<String>, status: ExitStatus) -> Self {
+        Self {
+            message: message.into(),
+            exit_code: status
+                .code()
+                .or_else(|| status.signal().map(|signal| 128 + signal)),
+        }
+    }
+}
+
+impl From<String> for CliCommandError {
+    fn from(message: String) -> Self {
+        Self::message(message)
+    }
+}
+
 struct ManagedPackageManagerClient {
     client: PackageManagerAsyncClient,
     _polkit_agent: Option<polkit_agent::TtyPolkitAgent>,
@@ -50,6 +84,104 @@ impl Deref for ManagedPackageManagerClient {
 
     fn deref(&self) -> &Self::Target {
         &self.client
+    }
+}
+
+struct TaskOutput {
+    json: bool,
+    show_progress: bool,
+    progress_active: AtomicBool,
+}
+
+impl TaskOutput {
+    fn new(json: bool, show_progress: bool) -> Self {
+        Self {
+            json,
+            show_progress,
+            progress_active: AtomicBool::new(false),
+        }
+    }
+
+    fn event(&self, event: &str, data: &VariantMap) {
+        match event {
+            "state" => self.state(data),
+            "message" => self.message(data),
+            _ => {}
+        }
+    }
+
+    fn state(&self, data: &VariantMap) {
+        let state = data
+            .get("state")
+            .and_then(|value| <&str>::try_from(value).ok())
+            .unwrap_or_default();
+        if matches!(state, "Canceled" | "Failed" | "Succeed") {
+            self.finish();
+            return;
+        }
+        if !self.show_progress {
+            return;
+        }
+        let progress = data
+            .get("progress")
+            .and_then(|value| f64::try_from(value).ok())
+            .unwrap_or_default()
+            .clamp(0.0, 100.0);
+        let message = data
+            .get("message")
+            .and_then(|value| <&str>::try_from(value).ok())
+            .unwrap_or_default();
+        if !self.json {
+            self.progress_active.store(true, AtomicOrdering::Release);
+        }
+        let mut output = io::stdout().lock();
+        let _ = output.write_all(format_task_progress(self.json, progress, message).as_bytes());
+        let _ = output.flush();
+    }
+
+    fn message(&self, data: &VariantMap) {
+        let Some(message) = data
+            .get("message")
+            .and_then(|value| <&str>::try_from(value).ok())
+        else {
+            return;
+        };
+        self.finish();
+        let mut output = io::stderr().lock();
+        let _ = output.write_all(format_task_message(self.json, message).as_bytes());
+        let _ = output.flush();
+    }
+
+    fn finish(&self) {
+        if self.json || !self.progress_active.swap(false, AtomicOrdering::AcqRel) {
+            return;
+        }
+        let mut output = io::stdout().lock();
+        let _ = output.write_all(b"\r\x1b[K");
+        let _ = output.flush();
+    }
+}
+
+fn format_task_progress(json: bool, progress: f64, message: &str) -> String {
+    if json {
+        return format!(
+            "{}\n",
+            serde_json::json!({ "percentage": progress, "message": message })
+        );
+    }
+    let percentage = if progress > 0.0 {
+        format!(" {progress:.2}%")
+    } else {
+        String::new()
+    };
+    format!("\r\x1b[K\x1b[?25l{message}{percentage}\x1b[?25h")
+}
+
+fn format_task_message(json: bool, message: &str) -> String {
+    if json {
+        format!("{}\n", serde_json::json!({ "message": message }))
+    } else {
+        format!("{message}\n")
     }
 }
 
@@ -304,6 +436,11 @@ enum InspectCommand {
         #[arg(short = 'm', long)]
         module: Option<String>,
     },
+    RemoteInfo {
+        reference: String,
+        #[arg(long)]
+        repo: Option<String>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -344,6 +481,8 @@ enum RepoCommand {
     },
     EnableMirror {
         alias: String,
+        #[arg(long)]
+        region: Option<String>,
     },
     DisableMirror {
         alias: String,
@@ -362,7 +501,9 @@ impl From<RepoCommand> for RepoOperation {
             RepoCommand::SetPriority { alias, priority } => {
                 RepoOperation::SetPriority { alias, priority }
             }
-            RepoCommand::EnableMirror { alias } => RepoOperation::EnableMirror { alias },
+            RepoCommand::EnableMirror { alias, region } => {
+                RepoOperation::EnableMirror { alias, region }
+            }
             RepoCommand::DisableMirror { alias } => RepoOperation::DisableMirror { alias },
         }
     }
@@ -430,21 +571,36 @@ async fn main() {
         print!("{}", frozen_help::expanded_root());
         std::process::exit(-1);
     };
+    let mut command_exit_code = None;
     let result = match command {
         Command::Repo(repo) => run_repo(repo.command, cli.json, cli.no_dbus).await,
-        Command::Search(search) => run_search(search, cli.json, cli.no_dbus).await,
-        Command::Run(run) => runtime::run(run, cli.no_dbus).await,
-        Command::Install(install) => run_install(install, cli.json, cli.no_dbus).await,
-        Command::Uninstall(uninstall) => run_uninstall(uninstall, cli.json, cli.no_dbus).await,
-        Command::Upgrade(upgrade) => run_upgrade(upgrade, cli.json, cli.no_dbus).await,
+        Command::Search(search) => run_search(search, cli.json, cli.no_dbus, cli.no_progress).await,
+        Command::Run(run) => runtime::run(run, cli.no_dbus, cli.json)
+            .await
+            .map_err(|error| {
+                command_exit_code = error.exit_code;
+                error.message
+            }),
+        Command::Install(install) => {
+            run_install(install, cli.json, cli.no_dbus, cli.no_progress).await
+        }
+        Command::Uninstall(uninstall) => {
+            run_uninstall(uninstall, cli.json, cli.no_dbus, cli.no_progress).await
+        }
+        Command::Upgrade(upgrade) => {
+            run_upgrade(upgrade, cli.json, cli.no_dbus, cli.no_progress).await
+        }
         Command::List(list) => run_list(list, cli.json).await,
         Command::Info(app) => run_info(app, cli.json).await,
         Command::Content(app) => run_content(app, cli.json).await,
-        Command::Inspect(inspect) => run_inspect(inspect).await,
+        Command::Inspect(inspect) => run_inspect(inspect, cli.json).await,
         Command::Ps(options) => run_ps(options, cli.json),
-        Command::Enter(options) => run_enter(options),
+        Command::Enter(options) => run_enter(options).map_err(|error| {
+            command_exit_code = error.exit_code;
+            error.message
+        }),
         Command::Kill(options) => run_kill(options),
-        Command::Prune => run_prune(cli.json, cli.no_dbus).await,
+        Command::Prune => run_prune(cli.json, cli.no_dbus, cli.no_progress).await,
         Command::Analyze(analyze) => analysis::run(analyze, cli.json).await,
     };
     if let Err(error) = result {
@@ -453,12 +609,12 @@ async fn main() {
         } else {
             eprintln!("{error}");
         }
-        std::process::exit(-1);
+        std::process::exit(command_exit_code.unwrap_or(-1));
     }
 }
 
-async fn run_prune(json: bool, no_dbus: bool) -> Result<(), String> {
-    let client = package_manager_client(no_dbus).await?;
+async fn run_prune(json: bool, no_dbus: bool, no_progress: bool) -> Result<(), String> {
+    let client = task_package_manager_client(no_dbus, json, !no_progress).await?;
     let result = client.prune().await.map_err(format_package_manager_error)?;
     let packages = result.packages.unwrap_or_default();
     if json {
@@ -512,7 +668,12 @@ async fn run_repo(command: RepoCommand, json: bool, no_dbus: bool) -> Result<(),
     }
 }
 
-async fn run_install(options: Install, json: bool, no_dbus: bool) -> Result<(), String> {
+async fn run_install(
+    options: Install,
+    json: bool,
+    no_dbus: bool,
+    no_progress: bool,
+) -> Result<(), String> {
     let path = Path::new(&options.app);
     if path.exists() {
         if !path.is_file() {
@@ -530,7 +691,7 @@ async fn run_install(options: Install, json: bool, no_dbus: bool) -> Result<(), 
                 "Unsupported file format .{file_type}; expected a .layer or .uab file."
             ));
         }
-        let client = package_manager_client(no_dbus).await?;
+        let client = task_package_manager_client(no_dbus, json, !no_progress).await?;
         let result = client
             .install_file_with_interaction(
                 path,
@@ -571,7 +732,7 @@ async fn run_install(options: Install, json: bool, no_dbus: bool) -> Result<(), 
         },
         repo: options.repo,
     };
-    let client = package_manager_client(no_dbus).await?;
+    let client = task_package_manager_client(no_dbus, json, !no_progress).await?;
     let app_id = parameters.package.id.clone();
     let result = client
         .install_with_interaction(parameters, confirm_interaction)
@@ -580,7 +741,12 @@ async fn run_install(options: Install, json: bool, no_dbus: bool) -> Result<(), 
     print_task_result(&result, json)
 }
 
-async fn run_uninstall(options: Uninstall, json: bool, no_dbus: bool) -> Result<(), String> {
+async fn run_uninstall(
+    options: Uninstall,
+    json: bool,
+    no_dbus: bool,
+    no_progress: bool,
+) -> Result<(), String> {
     let _legacy_compatibility_flags = (options.prune, options.all);
     let fuzzy = options
         .app
@@ -599,7 +765,7 @@ async fn run_uninstall(options: Uninstall, json: bool, no_dbus: bool) -> Result<
             version: fuzzy.version,
         },
     };
-    let client = package_manager_client(no_dbus).await?;
+    let client = task_package_manager_client(no_dbus, json, !no_progress).await?;
     let result = client
         .uninstall(parameters)
         .await
@@ -607,7 +773,12 @@ async fn run_uninstall(options: Uninstall, json: bool, no_dbus: bool) -> Result<
     print_task_result(&result, json)
 }
 
-async fn run_upgrade(options: Upgrade, json: bool, no_dbus: bool) -> Result<(), String> {
+async fn run_upgrade(
+    options: Upgrade,
+    json: bool,
+    no_dbus: bool,
+    no_progress: bool,
+) -> Result<(), String> {
     let packages = if let Some(app) = options.app {
         let fuzzy = app
             .parse::<FuzzyReference>()
@@ -631,7 +802,7 @@ async fn run_upgrade(options: Upgrade, json: bool, no_dbus: bool) -> Result<(), 
     } else {
         Vec::new()
     };
-    let client = package_manager_client(no_dbus).await?;
+    let client = task_package_manager_client(no_dbus, json, !no_progress).await?;
     let result = client
         .update(PackageManagerUpdateParameters {
             deps_only: options.deps_only,
@@ -715,12 +886,12 @@ fn confirm_interaction(message_id: i32, additional: &VariantMap) -> bool {
 
 fn print_task_result(result: &CommonResult, json: bool) -> Result<(), String> {
     if json {
-        println!(
+        eprintln!(
             "{}",
             serde_json::to_string(result).map_err(|error| error.to_string())?
         );
     } else if !result.message.is_empty() {
-        println!("{}", result.message);
+        eprintln!("{}", result.message);
     }
     Ok(())
 }
@@ -819,7 +990,7 @@ async fn package_manager_client(no_dbus: bool) -> Result<ManagedPackageManagerCl
         let client = PackageManagerAsyncClient::system()
             .await
             .map_err(|error| error.to_string())?;
-        let polkit_agent = polkit_agent::TtyPolkitAgent::start();
+        let polkit_agent = polkit_agent::TtyPolkitAgent::start(client.unique_name().as_deref());
         return Ok(ManagedPackageManagerClient {
             client,
             _polkit_agent: polkit_agent,
@@ -829,6 +1000,21 @@ async fn package_manager_client(no_dbus: bool) -> Result<ManagedPackageManagerCl
         client: initialize_peer_package_manager().await?,
         _polkit_agent: None,
     })
+}
+
+async fn task_package_manager_client(
+    no_dbus: bool,
+    json: bool,
+    show_progress: bool,
+) -> Result<ManagedPackageManagerClient, String> {
+    let mut client = package_manager_client(no_dbus).await?;
+    let output = Arc::new(TaskOutput::new(json, show_progress));
+    let event_output = Arc::clone(&output);
+    client.client.observe_tasks(
+        move |event, data| event_output.event(event, data),
+        move || output.finish(),
+    );
+    Ok(client)
 }
 
 async fn initialize_peer_package_manager() -> Result<PackageManagerAsyncClient, String> {
@@ -944,8 +1130,13 @@ impl Drop for PeerSocketDirectory {
     }
 }
 
-async fn run_search(options: Search, json: bool, no_dbus: bool) -> Result<(), String> {
-    let client = package_manager_client(no_dbus).await?;
+async fn run_search(
+    options: Search,
+    json: bool,
+    no_dbus: bool,
+    no_progress: bool,
+) -> Result<(), String> {
+    let client = task_package_manager_client(no_dbus, json, !no_progress).await?;
     let config = client
         .configuration()
         .await
@@ -1452,7 +1643,7 @@ fn resolve_entry_export_path(
     Some(entries.join(relative))
 }
 
-async fn run_inspect(options: Inspect) -> Result<(), String> {
+async fn run_inspect(options: Inspect, json: bool) -> Result<(), String> {
     match options.command {
         InspectCommand::Dir {
             app,
@@ -1488,6 +1679,71 @@ async fn run_inspect(options: Inspect) -> Result<(), String> {
                 "Invalid type: {value}, type must be layer or bundle"
             )),
         },
+        InspectCommand::RemoteInfo { reference, repo } => {
+            let fuzzy = reference
+                .parse::<FuzzyReference>()
+                .map_err(|error| error.to_string())?;
+            let repository = open_local_repository().await?;
+            let specified = repo
+                .as_deref()
+                .map(|alias| {
+                    repository
+                        .config()
+                        .repos
+                        .iter()
+                        .find(|repo| repo.effective_name() == alias)
+                        .cloned()
+                        .ok_or_else(|| format!("repo {alias} not found"))
+                })
+                .transpose()?;
+            let groups = specified
+                .as_ref()
+                .map(|repo| vec![vec![repo.clone()]])
+                .unwrap_or_else(|| priority_grouped_repos(repository.config()));
+            let mut candidates = RemotePackages::default();
+            let mut any_success = false;
+            for group in groups {
+                for remote in group {
+                    let result = match RemoteRepositoryClient::new(&remote.url) {
+                        Ok(client) => client.search_packages(&fuzzy, &remote, true).await,
+                        Err(error) => Err(error),
+                    };
+                    match result {
+                        Ok(packages) => {
+                            any_success = true;
+                            if !packages.is_empty() {
+                                candidates.add_packages(remote, packages);
+                            }
+                        }
+                        Err(error) if specified.is_some() => {
+                            return Err(format!(
+                                "failed to search remote packages from {}: {error}",
+                                remote.name
+                            ));
+                        }
+                        Err(_) => {}
+                    }
+                }
+                if !candidates.is_empty() {
+                    break;
+                }
+            }
+            if !any_success {
+                return Err("failed to search remote packages".to_string());
+            }
+            let (remote, package) = candidates
+                .latest_package()
+                .map_err(|_| "Cannot find such application from remote.".to_string())?;
+            let reference = reference_from_package(&package)?;
+            let metadata = repository
+                .fetch_remote_metadata(&reference, &remote, "binary", true)
+                .await
+                .map_err(|error| error.to_string())?;
+            let info = metadata
+                .package_info
+                .ok_or_else(|| "remote package has no package info".to_string())?;
+            print_package_info(&info, json)
+        }
     }
 }
 
@@ -1509,11 +1765,11 @@ fn run_ps(options: Ps, json: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn run_enter(options: Enter) -> Result<(), String> {
+fn run_enter(options: Enter) -> Result<(), CliCommandError> {
     let containers = running_container_ids(&options.instance)?;
     let container = containers
         .first()
-        .ok_or_else(|| "no container found".to_string())?;
+        .ok_or_else(|| CliCommandError::message("no container found"))?;
     let commands = if options.command.is_empty() {
         vec![
             "/bin/bash".to_string(),
@@ -1531,14 +1787,18 @@ fn run_enter(options: Enter) -> Result<(), String> {
         rustix::process::getgid().as_raw()
     );
     let status = ProcessCommand::new(oci_runtime_binary())
-        .args(["exec", "--user", &user, container])
+        .args(["exec", "--tty", "--user", &user, container])
         .args(&commands)
         .status()
         .map_err(|error| format!("failed to execute OCI runtime: {error}"))?;
-    status
-        .success()
-        .then_some(())
-        .ok_or_else(|| format!("OCI runtime exec failed with {status}"))
+    if status.success() {
+        Ok(())
+    } else {
+        Err(CliCommandError::from_status(
+            format!("OCI runtime exec failed with {status}"),
+            status,
+        ))
+    }
 }
 
 fn run_kill(options: Kill) -> Result<(), String> {
@@ -1971,9 +2231,11 @@ mod tests {
         assert_eq!(
             RepoOperation::from(RepoCommand::EnableMirror {
                 alias: "stable".to_string(),
+                region: Some("CN".to_string()),
             }),
             RepoOperation::EnableMirror {
                 alias: "stable".to_string(),
+                region: Some("CN".to_string()),
             }
         );
     }
@@ -1988,6 +2250,7 @@ mod tests {
                     mirror_enabled: None,
                     name: "stable".to_string(),
                     priority: 10,
+                    region: None,
                     url: "https://stable.example".to_string(),
                 },
                 ApiRepo {
@@ -1995,6 +2258,7 @@ mod tests {
                     mirror_enabled: Some(true),
                     name: "testing".to_string(),
                     priority: 20,
+                    region: Some("CN".to_string()),
                     url: "https://beta.example".to_string(),
                 },
             ],
@@ -2210,5 +2474,35 @@ mod tests {
         assert!(output.contains("Installed"));
         assert!(output.contains("org.example.demo"));
         assert_eq!(format_upgrade_table(&[]), "No apps available for update.\n");
+    }
+
+    #[test]
+    fn command_errors_preserve_exit_and_signal_status() {
+        let exited = CliCommandError::from_status("failed", ExitStatus::from_raw(42 << 8));
+        assert_eq!(exited.exit_code, Some(42));
+
+        let signaled = CliCommandError::from_status("failed", ExitStatus::from_raw(9));
+        assert_eq!(signaled.exit_code, Some(137));
+    }
+
+    #[test]
+    fn task_output_matches_text_and_json_printers() {
+        assert_eq!(
+            format_task_progress(false, 42.5, "downloading"),
+            "\r\x1b[K\x1b[?25ldownloading 42.50%\x1b[?25h"
+        );
+        assert_eq!(
+            format_task_progress(false, 0.0, "queued"),
+            "\r\x1b[K\x1b[?25lqueued\x1b[?25h"
+        );
+        assert_eq!(
+            format_task_progress(true, 42.5, "downloading"),
+            "{\"message\":\"downloading\",\"percentage\":42.5}\n"
+        );
+        assert_eq!(format_task_message(false, "notice"), "notice\n");
+        assert_eq!(
+            format_task_message(true, "notice"),
+            "{\"message\":\"notice\"}\n"
+        );
     }
 }

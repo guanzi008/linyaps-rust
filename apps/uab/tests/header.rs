@@ -5,7 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use linyaps_api::{PackageInfoV2, UabLayer, UabMetaInfo, UabSections};
-use linyaps_repository::{append_elf_sections, build_erofs_image};
+use linyaps_repository::{build_erofs_image, write_uab_sections};
 use sha2::{Digest, Sha256};
 
 fn fixture(directory: &tempfile::TempDir) -> (std::path::PathBuf, UabMetaInfo) {
@@ -55,7 +55,7 @@ fn fixture(directory: &tempfile::TempDir) -> (std::path::PathBuf, UabMetaInfo) {
     };
     let metadata_bytes = serde_json::to_vec(&metadata).unwrap();
     let output = directory.path().join("application.uab");
-    append_elf_sections(
+    write_uab_sections(
         env!("CARGO_BIN_EXE_uab-header"),
         &output,
         &[

@@ -7,6 +7,10 @@ use linyaps_api::UabMetaInfo;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::uab_signature::{
+    SignatureEndian, UAB_META_SECTION, UAB_SIGNATURE_NOTE_SIZE, UAB_SIGNATURE_SECTION,
+    is_sha256_digest, parse_signature_note,
+};
 use crate::{LayerFileError, TarError, extract_tar, unpack_erofs_file};
 
 const ELF_MAGIC: &[u8; 4] = b"\x7fELF";
@@ -34,6 +38,13 @@ pub enum UabError {
     Metadata(#[from] serde_json::Error),
     #[error("UAB bundle digest mismatch: expected {expected}, calculated {calculated}")]
     DigestMismatch {
+        expected: String,
+        calculated: String,
+    },
+    #[error("invalid UAB signature: {0}")]
+    InvalidSignature(String),
+    #[error("UAB metadata digest mismatch: expected {expected}, calculated {calculated}")]
+    MetaDigestMismatch {
         expected: String,
         calculated: String,
     },
@@ -66,12 +77,43 @@ impl UabFile {
     }
 
     pub fn metadata(&self) -> Result<UabMetaInfo, UabError> {
-        let data = self.read_section("linglong.meta")?;
+        let data = self.read_section(UAB_META_SECTION)?;
         Ok(serde_json::from_slice(&data)?)
     }
 
     pub fn verify(&self) -> Result<(), UabError> {
-        let metadata = self.metadata()?;
+        let note = self.read_section(UAB_SIGNATURE_SECTION)?;
+        if note.len() != UAB_SIGNATURE_NOTE_SIZE {
+            return Err(UabError::InvalidSignature(format!(
+                "section {UAB_SIGNATURE_SECTION} has size {}, expected {UAB_SIGNATURE_NOTE_SIZE}",
+                note.len()
+            )));
+        }
+        let expected_meta_digest = parse_signature_note(&note, signature_endian(&self.file)?)
+            .ok_or_else(|| {
+                UabError::InvalidSignature(format!(
+                    "section {UAB_SIGNATURE_SECTION} has an invalid note layout"
+                ))
+            })?;
+        if !is_sha256_digest(expected_meta_digest) {
+            return Err(UabError::InvalidSignature(format!(
+                "section {UAB_SIGNATURE_SECTION} has an invalid digest"
+            )));
+        }
+        let metadata_bytes = self.read_section(UAB_META_SECTION)?;
+        let calculated_meta_digest = linyaps_core::hex_encode(Sha256::digest(&metadata_bytes));
+        if expected_meta_digest != calculated_meta_digest.as_bytes() {
+            return Err(UabError::MetaDigestMismatch {
+                expected: String::from_utf8_lossy(expected_meta_digest).into_owned(),
+                calculated: calculated_meta_digest,
+            });
+        }
+        let metadata: UabMetaInfo = serde_json::from_slice(&metadata_bytes)?;
+        if !is_sha256_digest(metadata.digest.as_bytes()) {
+            return Err(UabError::InvalidSignature(
+                "linglong.meta contains an invalid bundle digest".to_string(),
+            ));
+        }
         let bundle = self.section(&metadata.sections.bundle)?;
         let calculated = digest_section(&self.file, bundle)?;
         if calculated != metadata.digest {
@@ -119,6 +161,21 @@ impl UabFile {
         let mut data = vec![0; size];
         self.file.read_exact_at(&mut data, section.offset)?;
         Ok(data)
+    }
+}
+
+fn signature_endian(file: &File) -> Result<SignatureEndian, UabError> {
+    let mut identity = [0_u8; 6];
+    file.read_exact_at(&mut identity, 0)?;
+    if &identity[..4] != ELF_MAGIC {
+        return Err(UabError::InvalidElf("invalid magic".to_string()));
+    }
+    match identity[5] {
+        ELFDATA2LSB => Ok(SignatureEndian::Little),
+        ELFDATA2MSB => Ok(SignatureEndian::Big),
+        value => Err(UabError::InvalidElf(format!(
+            "unknown ELF data encoding {value}"
+        ))),
     }
 }
 
@@ -427,12 +484,16 @@ mod tests {
     }
 
     fn elf_fixture(metadata: &[u8], bundle: &[u8]) -> Vec<u8> {
-        let names = b"\0linglong.meta\0linglong.bundle\0.shstrtab\0";
-        let metadata_offset = 64_u64;
+        let names = b"\0.note.uab.sig\0linglong.meta\0linglong.bundle\0.shstrtab\0";
+        let mut note = crate::UAB_SIGNATURE_NOTE;
+        let metadata_digest = linyaps_core::hex_encode(Sha256::digest(metadata));
+        note[crate::UAB_SIGNATURE_DIGEST_OFFSET..].copy_from_slice(metadata_digest.as_bytes());
+        let note_offset = 64_u64;
+        let metadata_offset = note_offset + note.len() as u64;
         let bundle_offset = metadata_offset + metadata.len() as u64;
         let names_offset = bundle_offset + bundle.len() as u64;
         let section_offset = (names_offset + names.len() as u64 + 7) & !7;
-        let mut bytes = vec![0_u8; section_offset as usize + 4 * 64];
+        let mut bytes = vec![0_u8; section_offset as usize + 5 * 64];
         bytes[..4].copy_from_slice(ELF_MAGIC);
         bytes[4] = ELFCLASS64;
         bytes[5] = ELFDATA2LSB;
@@ -442,8 +503,9 @@ mod tests {
         bytes[40..48].copy_from_slice(&section_offset.to_le_bytes());
         bytes[52..54].copy_from_slice(&64_u16.to_le_bytes());
         bytes[58..60].copy_from_slice(&64_u16.to_le_bytes());
-        bytes[60..62].copy_from_slice(&4_u16.to_le_bytes());
-        bytes[62..64].copy_from_slice(&3_u16.to_le_bytes());
+        bytes[60..62].copy_from_slice(&5_u16.to_le_bytes());
+        bytes[62..64].copy_from_slice(&4_u16.to_le_bytes());
+        bytes[note_offset as usize..metadata_offset as usize].copy_from_slice(&note);
         bytes[metadata_offset as usize..bundle_offset as usize].copy_from_slice(metadata);
         bytes[bundle_offset as usize..names_offset as usize].copy_from_slice(bundle);
         bytes[names_offset as usize..names_offset as usize + names.len()].copy_from_slice(names);
@@ -451,20 +513,27 @@ mod tests {
             &mut bytes,
             section_offset + 64,
             1,
-            metadata_offset,
-            metadata.len() as u64,
+            note_offset,
+            note.len() as u64,
         );
         write_section(
             &mut bytes,
             section_offset + 128,
             15,
+            metadata_offset,
+            metadata.len() as u64,
+        );
+        write_section(
+            &mut bytes,
+            section_offset + 192,
+            29,
             bundle_offset,
             bundle.len() as u64,
         );
         write_section(
             &mut bytes,
-            section_offset + 192,
-            31,
+            section_offset + 256,
+            45,
             names_offset,
             names.len() as u64,
         );

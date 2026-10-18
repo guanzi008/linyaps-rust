@@ -62,6 +62,7 @@ set -l repo_subs add remove update set-default show set-priority enable-mirror d
 complete -c ll-cli -n "__fish_seen_subcommand_from repo; and not __fish_seen_subcommand_from $repo_subs" -a "$repo_subs"
 complete -c ll-cli -n "__fish_seen_subcommand_from repo; and __fish_seen_subcommand_from add" -l alias
 complete -c ll-cli -n "__fish_seen_subcommand_from repo; and __fish_seen_subcommand_from remove update set-default set-priority enable-mirror disable-mirror" -a "(__fish_ll_cli_get_repo_aliases)"
+complete -c ll-cli -n "__fish_seen_subcommand_from repo; and __fish_seen_subcommand_from enable-mirror" -l region
 
 # info 和 content 支持已安装的 app/runtime
 complete -c ll-cli -n "__fish_seen_subcommand_from info content" -a "(__fish_ll_cli_get_installed_all)"

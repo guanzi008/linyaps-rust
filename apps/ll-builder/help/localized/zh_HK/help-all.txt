@@ -55,11 +55,12 @@ export
   Options:
     -f,--file FILE:FILE         File path of the linglong.yaml
     -z,--compressor X           supported compressors are: lz4(default), lzma, zstd
-    --icon FILE:FILE Excludes: --layer
+    --icon FILE:FILE Needs: --uabx Excludes: --layer
                                 Uab 圖示（選填）
-    --layer Excludes: --icon --loader --output --ref --modules
+    --layer Excludes: --icon --uabx --loader --output --ref --modules
                                 匯出為 linyaps layer 檔案（已棄用）
-    --loader FILE:FILE Excludes: --layer
+    --uabx Excludes: --layer    匯出可執行 UABX
+    --loader FILE:FILE Needs: --uabx Excludes: --layer
                                 使用自訂載入器
     --no-develop Needs: --layer 不匯出開發（develop）模組
     -o,--output FILE Excludes: --layer

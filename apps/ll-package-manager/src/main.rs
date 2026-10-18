@@ -228,6 +228,9 @@ fn startup_environment_is_valid() -> bool {
 
 #[tokio::main]
 async fn main() {
+    unsafe {
+        libc::umask(0o022);
+    }
     let options = match parse_options_from(env::args_os()) {
         ParseOutcome::Run(options) => options,
         ParseOutcome::Error { code, message } => {
@@ -524,6 +527,7 @@ fn default_config() -> RepoConfigV2 {
             mirror_enabled: None,
             name: "stable".to_string(),
             priority: 0,
+            region: None,
             url: "https://mirror-repo-linglong.deepin.com".to_string(),
         }],
         version: 2,
@@ -824,6 +828,7 @@ mod tests {
             mirror_enabled: None,
             name: "testing".to_string(),
             priority: 10,
+            region: None,
             url: "https://example.invalid/repo".to_string(),
         });
         client.set_configuration(config.clone()).await.unwrap();
@@ -889,17 +894,18 @@ mod tests {
                 mirror_enabled: None,
                 name: "stable".to_string(),
                 priority: 0,
+                region: None,
                 url: remote_url,
             }],
             version: 2,
         };
         let mut repository = LocalRepository::create(&root, config).await.unwrap();
         repository
-            .import_layer_dir(&old_base_dir, &[], None)
+            .import_layer_dir(&old_base_dir, &[])
             .await
             .unwrap();
         repository
-            .import_layer_dir(&new_base_dir, &[], None)
+            .import_layer_dir(&new_base_dir, &[])
             .await
             .unwrap();
         let new_base_reference = linyaps_repository::reference_from_info(&new_base).unwrap();
@@ -908,10 +914,7 @@ mod tests {
                 .mark_layer_deleted(&new_base_reference, "binary")
                 .unwrap()
         );
-        repository
-            .import_layer_dir(&app_dir, &[], None)
-            .await
-            .unwrap();
+        repository.import_layer_dir(&app_dir, &[]).await.unwrap();
         drop(repository);
 
         let server_root = root.clone();

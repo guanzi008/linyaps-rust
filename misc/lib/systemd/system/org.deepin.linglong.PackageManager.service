@@ -11,3 +11,6 @@ User=deepin-linglong
 Group=deepin-linglong
 BusName=org.deepin.linglong.PackageManager1
 ExecStart=/usr/libexec/linglong/ll-package-manager
+
+PrivateTmp=yes
+ProtectHome=yes

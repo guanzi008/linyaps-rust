@@ -8,6 +8,7 @@ pub mod repo_lock;
 pub mod repository;
 pub mod runtime_config;
 pub mod runtime_paths;
+pub mod shared_fs;
 pub mod tls;
 pub mod version;
 

@@ -55,11 +55,12 @@ export
   Options:
     -f,--file FILE:FILE         Shteg kartele linglong.yaml
     -z,--compressor X           supported compressors are: lz4(default), lzma, zstd
-    --icon FILE:FILE Excludes: --layer
+    --icon FILE:FILE Needs: --uabx Excludes: --layer
                                 Ikonë uab (opsionale)
-    --layer Excludes: --icon --loader --output --ref --modules
+    --layer Excludes: --icon --uabx --loader --output --ref --modules
                                 Export to linyaps layer file (deprecated)
-    --loader FILE:FILE Excludes: --layer
+    --uabx Excludes: --layer    Export an executable UABX
+    --loader FILE:FILE Needs: --uabx Excludes: --layer
                                 Përdor ngarkues vetjak
     --no-develop Needs: --layer Mos eksporto modulin e zhvillimit
     -o,--output FILE Excludes: --layer

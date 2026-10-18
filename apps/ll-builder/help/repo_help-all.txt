@@ -43,6 +43,8 @@ enable-mirror
   Enable mirror for the repo
   Positionals:
     ALIAS TEXT REQUIRED         Alias of the repo name
+  Options:
+    --region REGION             Region code for mirror selection, e.g. CN, US
 
 disable-mirror
   Disable mirror for the repo

@@ -1005,9 +1005,15 @@ fn parse_repo(arguments: &[String]) -> Result<Command, ParseError> {
                 .map_err(|_| conversion("PRIORITY", &raw))?;
             RepoCommand::SetPriority { alias, priority }
         }
-        "enable-mirror" => RepoCommand::EnableMirror {
-            alias: exact_required(rest, "ALIAS")?,
-        },
+        "enable-mirror" => {
+            let (positionals, options) = repo_values(rest, &["--region"])?;
+            let alias = required_at(&positionals, 0, "ALIAS")?;
+            reject_extra(&positionals, 1)?;
+            RepoCommand::EnableMirror {
+                alias,
+                region: options.get("--region").cloned(),
+            }
+        }
         "disable-mirror" => RepoCommand::DisableMirror {
             alias: exact_required(rest, "ALIAS")?,
         },
@@ -1020,6 +1026,17 @@ fn parse_inspect(arguments: &[String]) -> Result<Command, ParseError> {
     let Some((subcommand, rest)) = arguments.split_first() else {
         return Err(subcommand_required());
     };
+    if subcommand == "remote-info" {
+        let (positionals, options) = repo_values(rest, &["--repo"])?;
+        let reference = required_at(&positionals, 0, "REF")?;
+        reject_extra(&positionals, 1)?;
+        return Ok(Command::Inspect(Inspect {
+            command: InspectCommand::RemoteInfo {
+                reference,
+                repo: options.get("--repo").cloned(),
+            },
+        }));
+    }
     if subcommand != "dir" {
         return Err(subcommand_required());
     }

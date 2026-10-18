@@ -4,6 +4,7 @@ mod local;
 mod remote;
 mod tar;
 mod uab;
+mod uab_signature;
 mod writer;
 
 pub use cache::{CACHE_VERSION, CacheError, RepositoryCacheStore};
@@ -21,8 +22,12 @@ pub use remote::{
 };
 pub use tar::{TarError, extract_tar};
 pub use uab::{UabError, UabFile, UabSection};
+pub use uab_signature::{
+    UAB_META_SECTION, UAB_SIGNATURE_DIGEST_OFFSET, UAB_SIGNATURE_DIGEST_SIZE, UAB_SIGNATURE_NOTE,
+    UAB_SIGNATURE_NOTE_SIZE, UAB_SIGNATURE_SECTION,
+};
 pub use writer::{
     ErofsBuildError, ErofsCompression, LayerWriteError, UabWriteError, append_elf_sections,
     build_erofs_image, build_erofs_image_with_compression, write_layer_file,
-    write_layer_file_with_compression,
+    write_layer_file_with_compression, write_uab_sections,
 };

@@ -477,6 +477,7 @@ mod tests {
             base: Some("stable/org.example.Base/1.0.0.0/x86_64".to_string()),
             cdi_devices: None,
             extensions: Some(Default::default()),
+            host_dynamic: None,
             instance: None,
             mounts: None,
             overlayfs: None,
@@ -541,6 +542,7 @@ mod tests {
             base: Some("stable:org.example.Base/1.0.0.0/x86_64".to_string()),
             cdi_devices: None,
             extensions: Some(Default::default()),
+            host_dynamic: None,
             instance: None,
             mounts: None,
             overlayfs: None,
@@ -601,8 +603,8 @@ mod tests {
         )
         .unwrap();
         fs::write(app.join("files/bin/demo"), b"demo").unwrap();
-        repository.import_layer_dir(&base, &[], None).await.unwrap();
-        repository.import_layer_dir(&app, &[], None).await.unwrap();
+        repository.import_layer_dir(&base, &[]).await.unwrap();
+        repository.import_layer_dir(&app, &[]).await.unwrap();
         repository.merge_modules().unwrap();
 
         let app_reference = reference_from_info(&app_info).unwrap();
@@ -611,6 +613,7 @@ mod tests {
             base: Some(base_reference.to_string()),
             cdi_devices: None,
             extensions: Some(Default::default()),
+            host_dynamic: None,
             instance: None,
             mounts: None,
             overlayfs: None,

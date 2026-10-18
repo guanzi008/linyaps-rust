@@ -17,17 +17,20 @@ use linyaps_api::{
 use linyaps_core::cdi;
 use linyaps_core::repo_lock::RepoLock;
 use linyaps_core::runtime_config;
+use linyaps_core::shared_fs::{
+    SHARED_DIRECTORY_MODE, SHARED_FILE_MODE, ensure_directory_with_mode, write_file_with_mode,
+};
 use linyaps_core::{Architecture, FuzzyReference, Reference, apply_oci_configuration_patches};
 use linyaps_repository::LocalRepository;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::{
-    Run, format_package_manager_error, oci_runtime_binary, package_manager_client,
-    process_state_root, xdg_runtime_dir,
+    CliCommandError, Run, format_package_manager_error, oci_runtime_binary, process_state_root,
+    task_package_manager_client, xdg_runtime_dir,
 };
 
-pub(super) async fn run(options: Run, no_dbus: bool) -> Result<(), String> {
+pub(super) async fn run(options: Run, no_dbus: bool, json: bool) -> Result<(), CliCommandError> {
     let repository = super::open_local_repository().await?;
     let runtime_config = runtime_config::load_runtime_config(
         &options.app,
@@ -61,7 +64,7 @@ pub(super) async fn run(options: Run, no_dbus: bool) -> Result<(), String> {
         .join(&target_item.commit)
         .join(&container_id);
     let process_args = process_arguments(&options, &app_info)?;
-    let package_manager = package_manager_client(no_dbus).await?;
+    let package_manager = task_package_manager_client(no_dbus, json, false).await?;
     package_manager
         .init_run_context(&run_context_json, &container_id)
         .await
@@ -71,10 +74,7 @@ pub(super) async fn run(options: Run, no_dbus: bool) -> Result<(), String> {
         let startup_lock = match acquire_startup_lock_or_reuse(&container_id, &process_args)? {
             StartupLock::New(lock) => lock,
             StartupLock::Reused(status) => {
-                return status
-                    .success()
-                    .then_some(())
-                    .ok_or_else(|| format!("application exited with {status}"));
+                return exit_status_result(status, "application");
             }
         };
         let status = crate::namespace::run(&run_context_json);
@@ -83,10 +83,7 @@ pub(super) async fn run(options: Run, no_dbus: bool) -> Result<(), String> {
         drop(startup_lock);
         let status = status?;
         cleanup?;
-        return status
-            .success()
-            .then_some(())
-            .ok_or_else(|| format!("namespace child exited with {status}"));
+        return exit_status_result(status, "namespace child");
     }
     let startup_lock = if crate::namespace::is_child() {
         None
@@ -94,10 +91,7 @@ pub(super) async fn run(options: Run, no_dbus: bool) -> Result<(), String> {
         match acquire_startup_lock_or_reuse(&container_id, &process_args)? {
             StartupLock::New(lock) => Some(lock),
             StartupLock::Reused(status) => {
-                return status
-                    .success()
-                    .then_some(())
-                    .ok_or_else(|| format!("application exited with {status}"));
+                return exit_status_result(status, "application");
             }
         }
     };
@@ -111,7 +105,7 @@ pub(super) async fn run(options: Run, no_dbus: bool) -> Result<(), String> {
         .map_err(|error| error.to_string())?
         .join("files");
     if !base_layer.is_dir() {
-        return Err(format!("layer {} has no files directory", base_reference));
+        return Err(format!("layer {} has no files directory", base_reference).into());
     }
     let overlay = run_context
         .overlayfs
@@ -177,10 +171,18 @@ pub(super) async fn run(options: Run, no_dbus: bool) -> Result<(), String> {
     bundle_cleanup.finish()?;
     let status = status?;
     drop(startup_lock);
-    status
-        .success()
-        .then_some(())
-        .ok_or_else(|| format!("application exited with {status}"))
+    exit_status_result(status, "application")
+}
+
+fn exit_status_result(status: ExitStatus, subject: &str) -> Result<(), CliCommandError> {
+    if status.success() {
+        Ok(())
+    } else {
+        Err(CliCommandError::from_status(
+            format!("{subject} exited with {status}"),
+            status,
+        ))
+    }
 }
 
 struct ResolvedRunContext {
@@ -293,6 +295,7 @@ fn resolve_requested_context(
         base: Some(base.to_string()),
         cdi_devices: resolve_cdi_devices(options, runtime_config)?,
         extensions: Some(extension_map),
+        host_dynamic: None,
         instance: options.instance.clone(),
         mounts: resolved_mounts(runtime_config),
         overlayfs: Some(resolve_overlay_mode(repository, &base)?),
@@ -713,7 +716,7 @@ fn reuse_running_container(
     );
     let mut command = Command::new(oci_runtime_binary());
     command.args(["exec", "--user", &user]);
-    if std::io::stdin().is_terminal() {
+    if std::io::stdout().is_terminal() || std::io::stderr().is_terminal() {
         command.arg("--tty");
     }
     let status = command
@@ -757,6 +760,7 @@ fn oci_config(
     let bundle = rootfs
         .parent()
         .ok_or_else(|| format!("rootfs {} has no bundle directory", rootfs.display()))?;
+    prepare_run_context_mount_points(rootfs, run_context)?;
     let HostIntegration {
         mut mounts,
         masked_paths,
@@ -926,11 +930,7 @@ fn oci_config(
             .or_insert_with(|| "xdgdesktopportal".to_string());
     }
     prepare_container_environment(bundle, &environment, &mut mounts)?;
-    let mut namespaces = vec![
-        json!({"type": "pid"}),
-        json!({"type": "mount"}),
-        json!({"type": "uts"}),
-    ];
+    let mut namespaces = vec![json!({"type": "pid"}), json!({"type": "mount"})];
     if !options.privileged {
         namespaces.push(json!({"type": "user"}));
     }
@@ -966,7 +966,6 @@ fn oci_config(
     let mut configuration = json!({
         "ociVersion": "1.0.1",
         "root": {"path": "rootfs", "readonly": true},
-        "hostname": "linglong",
         "process": process,
         "mounts": mounts,
         "linux": linux,
@@ -1309,7 +1308,13 @@ fn host_integration(
         Path::new("/run/linglong/.lock"),
         false,
     ));
-    for mount in run_context.mounts.as_deref().into_iter().flatten() {
+    for mount in run_context
+        .host_dynamic
+        .as_deref()
+        .into_iter()
+        .flatten()
+        .chain(run_context.mounts.as_deref().into_iter().flatten())
+    {
         mounts.push(json!({
             "destination": mount.destination,
             "type": mount.mount_type,
@@ -1872,6 +1877,55 @@ fn prepare_container_environment(
     Ok(())
 }
 
+fn prepare_run_context_mount_points(
+    rootfs: &Path,
+    run_context: &RunContextConfig,
+) -> Result<(), String> {
+    for mount in run_context
+        .mounts
+        .as_deref()
+        .into_iter()
+        .flatten()
+        .chain(run_context.host_dynamic.as_deref().into_iter().flatten())
+    {
+        let Some(source_type) = mount.source_type.as_deref() else {
+            continue;
+        };
+        let destination = rootfs_path(rootfs, Path::new(&mount.destination))?;
+        match fs::metadata(&destination) {
+            Ok(metadata)
+                if (source_type == "file" && !metadata.is_dir())
+                    || (source_type != "file" && metadata.is_dir()) =>
+            {
+                continue;
+            }
+            Ok(metadata) => {
+                let result = if metadata.is_dir() {
+                    fs::remove_dir_all(&destination)
+                } else {
+                    fs::remove_file(&destination)
+                };
+                if result.is_err() {
+                    continue;
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => continue,
+        }
+        let result = if source_type == "file" {
+            destination
+                .parent()
+                .map(fs::create_dir_all)
+                .transpose()
+                .and_then(|_| fs::write(&destination, []))
+        } else {
+            fs::create_dir_all(&destination)
+        };
+        let _ = result;
+    }
+    Ok(())
+}
+
 fn prepare_container_entrypoint(
     bundle: &Path,
     arguments: &[String],
@@ -1927,7 +1981,7 @@ fn finalize_container_process(
         requested_workdir,
         uid,
         gid,
-        std::io::stdin().is_terminal(),
+        std::io::stdout().is_terminal() || std::io::stderr().is_terminal(),
     )?;
     let mut entrypoint_mounts = Vec::new();
     let process_arguments =
@@ -2512,7 +2566,7 @@ fn write_process_state(
 ) -> Result<PathBuf, String> {
     let _repo_lock = RepoLock::shared().map_err(|error| error.to_string())?;
     let root = process_state_root();
-    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    ensure_directory_with_mode(&root, SHARED_DIRECTORY_MODE).map_err(|error| error.to_string())?;
     let path = root.join(pid.to_string());
     let state = ContainerProcessStateInfo {
         app: app.to_string(),
@@ -2522,9 +2576,10 @@ fn write_process_state(
             .then(|| extensions.iter().map(ToString::to_string).collect()),
         runtime: runtime.map(ToString::to_string),
     };
-    fs::write(
+    write_file_with_mode(
         &path,
         serde_json::to_vec(&state).map_err(|error| error.to_string())?,
+        SHARED_FILE_MODE,
     )
     .map_err(|error| error.to_string())?;
     Ok(path)
@@ -2761,6 +2816,7 @@ mod tests {
             base: Some("stable/org.example.Base/1.0.0.0/x86_64".to_string()),
             cdi_devices: None,
             extensions: Some(Default::default()),
+            host_dynamic: None,
             instance: Some("test".to_string()),
             mounts: None,
             overlayfs: None,
@@ -2787,6 +2843,7 @@ mod tests {
             base: Some("stable/org.example.Base/1.0.0.0/x86_64".to_string()),
             cdi_devices: None,
             extensions: None,
+            host_dynamic: None,
             instance: None,
             mounts: None,
             overlayfs: None,

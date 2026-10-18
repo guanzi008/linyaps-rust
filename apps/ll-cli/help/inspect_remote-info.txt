@@ -1,0 +1,13 @@
+Display package information fetched from the remote repository
+Usage: ll-cli inspect remote-info [OPTIONS] REF
+
+Positionals:
+  REF TEXT REQUIRED           Specify the application reference
+
+Options:
+  --repo REPO                 Specify the repo
+  -h,--help                   Print this help message and exit
+  --help-all                  Expand all help
+
+If you found any problems during use,
+You can report bugs to the linyaps team under this project: https://github.com/OpenAtom-Linyaps/linyaps/issues

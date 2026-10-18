@@ -71,7 +71,7 @@ _ll_builder_complete() {
         fi
         ;;
     export)
-        local export_options="-f --file -z --compressor --icon --layer --loader --no-develop -o --output --ref --modules"
+        local export_options="-f --file -z --compressor --icon --layer --uabx --loader --no-develop -o --output --ref --modules"
         output_options="${common_options} ${export_options}"
 
         case ${prev} in
@@ -103,10 +103,12 @@ _ll_builder_complete() {
         fi
         ;;
     repo)
-        local repo_subcommands="add remove update set-default show enable-mirror disable-mirror"
+        local repo_subcommands="add remove update set-default show set-priority enable-mirror disable-mirror"
         if [[ ${prev} == "repo" ]]; then
             output_options="${common_options} ${repo_subcommands}"
-        elif [[ " remove update set-default enable-mirror disable-mirror " =~ " ${prev} " ]]; then
+        elif [[ " ${COMP_WORDS[*]} " =~ " enable-mirror " ]]; then
+            output_options="--region ${common_options}"
+        elif [[ " remove update set-default set-priority enable-mirror disable-mirror " =~ " ${prev} " ]]; then
             output_options="$(__ll_builder_get_repo_name_list)"
         else
             output_options="${common_options}"

@@ -5,6 +5,8 @@ use std::path::Path;
 use linyaps_api::{Repo, RepoConfig, RepoConfigV2};
 use thiserror::Error;
 
+use crate::shared_fs::{SHARED_FILE_MODE, write_file_with_mode};
+
 #[derive(Debug, Error)]
 pub enum RepositoryConfigError {
     #[error("failed to read repository configuration: {0}")]
@@ -34,7 +36,7 @@ pub fn save_config(config: &RepoConfigV2, path: &Path) -> Result<(), RepositoryC
     {
         return Err(RepositoryConfigError::MissingDefault);
     }
-    fs::write(path, serde_yml::to_string(config)?)?;
+    write_file_with_mode(path, serde_yml::to_string(config)?, SHARED_FILE_MODE)?;
     Ok(())
 }
 
@@ -47,6 +49,7 @@ pub fn convert_to_v2(config: RepoConfig) -> RepoConfigV2 {
             mirror_enabled: None,
             name: config.default_repo.clone(),
             priority,
+            region: None,
             url: url.clone(),
         });
         priority -= 100;
@@ -60,6 +63,7 @@ pub fn convert_to_v2(config: RepoConfig) -> RepoConfigV2 {
             mirror_enabled: None,
             name,
             priority,
+            region: None,
             url,
         });
         priority -= 100;
@@ -131,6 +135,7 @@ mod tests {
             mirror_enabled: Some(false),
             name: name.to_string(),
             priority,
+            region: None,
             url: format!("http://example.com/{name}"),
         }
     }

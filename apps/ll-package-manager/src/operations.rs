@@ -1,8 +1,11 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File};
-use std::path::Path;
+use std::fs::{self, File, OpenOptions};
+use std::io::{ErrorKind, Write};
+use std::os::unix::fs::{FileExt, OpenOptionsExt};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_lock::Mutex;
@@ -85,6 +88,100 @@ struct GatheredUpdate {
     package_info: Option<PackageInfoV2>,
 }
 
+static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+struct StagedPackage {
+    path: PathBuf,
+}
+
+impl StagedPackage {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn unpack_path(&self) -> PathBuf {
+        let mut unpack_root = self.path.as_os_str().to_os_string();
+        unpack_root.push(".unpack");
+        PathBuf::from(unpack_root).join("unpack")
+    }
+}
+
+impl Drop for StagedPackage {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+        let mut unpack_root = self.path.as_os_str().to_os_string();
+        unpack_root.push(".unpack");
+        let _ = fs::remove_dir_all(PathBuf::from(unpack_root));
+        if let Some(parent) = self.path.parent() {
+            let _ = fs::remove_dir(parent);
+        }
+    }
+}
+
+fn stage_package(source: &File, repository_root: &Path) -> std::io::Result<StagedPackage> {
+    let metadata = source.metadata()?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidInput,
+            "source file descriptor is not a regular file",
+        ));
+    }
+
+    let staging = repository_root.join("staging");
+    fs::create_dir_all(&staging)?;
+    let mut staged = None;
+    for _ in 0..128 {
+        let sequence = STAGING_SEQUENCE.fetch_add(1, AtomicOrdering::Relaxed);
+        let path = staging.join(format!("install-{}-{sequence}", std::process::id()));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+        {
+            Ok(file) => {
+                staged = Some((path, file));
+                break;
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    let Some((path, mut destination)) = staged else {
+        return Err(std::io::Error::new(
+            ErrorKind::AlreadyExists,
+            "failed to allocate a unique staging file",
+        ));
+    };
+
+    let result = (|| {
+        let mut offset = 0_u64;
+        let mut buffer = vec![0_u8; 1024 * 1024];
+        while offset < metadata.len() {
+            let remaining = metadata.len() - offset;
+            let length =
+                usize::try_from(remaining.min(buffer.len() as u64)).unwrap_or(buffer.len());
+            let read = source.read_at(&mut buffer[..length], offset)?;
+            if read == 0 {
+                return Err(std::io::Error::new(
+                    ErrorKind::UnexpectedEof,
+                    "source file was truncated while being copied",
+                ));
+            }
+            destination.write_all(&buffer[..read])?;
+            offset += read as u64;
+        }
+        destination.flush()
+    })();
+    if let Err(error) = result {
+        drop(destination);
+        let _ = fs::remove_file(&path);
+        return Err(error);
+    }
+    drop(destination);
+    Ok(StagedPackage { path })
+}
+
 pub async fn install(
     repository: SharedRepository,
     parameters: PackageManagerInstallParameters,
@@ -103,12 +200,6 @@ pub async fn install_file(
     options: CommonOptions,
     context: TaskContext,
 ) -> Result<TaskCompletion, String> {
-    if let Err(error) = InstallHooks::load().and_then(|hooks| hooks.pre_install(&file)) {
-        return Ok(TaskCompletion::failed(
-            INSTALL_FAILED,
-            format!("install hook verification failed: {error:#}"),
-        ));
-    }
     let result = match file_type.as_str() {
         "layer" => install_layer_inner(repository, file, options, context).await,
         "uab" => install_uab_inner(repository, file, options, context).await,
@@ -129,7 +220,22 @@ async fn install_uab_inner(
     options: CommonOptions,
     context: TaskContext,
 ) -> Result<TaskCompletion, OperationError> {
-    let uab = UabFile::from_file(file)
+    context
+        .update_progress(0.0, "preparing uab")
+        .await
+        .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+    let repository_root = repository.lock().await.root().to_path_buf();
+    let staged = stage_package(&file, &repository_root)
+        .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+    InstallHooks::load()
+        .and_then(|hooks| hooks.pre_install(staged.path()))
+        .map_err(|error| {
+            OperationError::new(
+                INSTALL_FAILED,
+                format!("install hook verification failed: {error:#}"),
+            )
+        })?;
+    let uab = UabFile::open(staged.path())
         .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
     uab.verify()
         .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
@@ -142,8 +248,13 @@ async fn install_uab_inner(
             format!("unsupported UAB metadata version {}", metadata.version),
         ));
     }
-    let executable_mode = metadata.only_app.unwrap_or(false);
-    let (app_layers, other_layers) = validate_uab_layout(&metadata.layers, executable_mode)?;
+    if metadata.only_app.unwrap_or(false) {
+        return Err(OperationError::new(
+            INSTALL_FAILED,
+            "executable UAB installation is not supported",
+        ));
+    }
+    let (app_layers, other_layers) = validate_uab_layout(&metadata.layers)?;
 
     let selected_layers = if app_layers.is_empty() {
         &other_layers
@@ -241,17 +352,11 @@ async fn install_uab_inner(
         .update_progress(10.0, "installing uab")
         .await
         .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
-    let work = repository.root().join("tmp").join(format!(
-        "install-uab-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    ));
+    let work = staged.unpack_path();
     fs::create_dir_all(work.parent().expect("temporary UAB path has a parent"))
         .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
     let mut imported_layers = Vec::new();
+    let mut post_install_attempted = false;
     let result = async {
         uab.unpack_bundle(&work)
             .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
@@ -268,37 +373,7 @@ async fn install_uab_inner(
             .update_progress(15.0, "checking uab dependencies")
             .await
             .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
-        if executable_mode {
-            let app_info = &app_layers[0].info;
-            ensure_dependency(&mut repository, &app_info.base, &app_info.channel, &context).await?;
-            if let Some(runtime) = app_info.runtime.as_deref() {
-                let runtime_fuzzy = dependency_fuzzy(runtime, &app_info.channel, INSTALL_FAILED)?;
-                if latest_local_reference(&repository, &runtime_fuzzy)?.is_none() {
-                    import_uab_layers(
-                        &mut repository,
-                        &work,
-                        &other_layers,
-                        Some(&metadata.uuid),
-                        &overlays,
-                        &mut imported_layers,
-                    )
-                    .await?;
-                }
-            }
-            context
-                .update_progress(35.0, "importing application layers")
-                .await
-                .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
-            import_uab_layers(
-                &mut repository,
-                &work,
-                &app_layers,
-                None,
-                &overlays,
-                &mut imported_layers,
-            )
-            .await?;
-        } else if !app_layers.is_empty() {
+        if !app_layers.is_empty() {
             let app_info = &app_layers[0].info;
             ensure_dependency(&mut repository, &app_info.base, &app_info.channel, &context).await?;
             if let Some(runtime) = app_info.runtime.as_deref() {
@@ -308,7 +383,6 @@ async fn install_uab_inner(
                 &mut repository,
                 &work,
                 &app_layers,
-                None,
                 &overlays,
                 &mut imported_layers,
             )
@@ -318,7 +392,6 @@ async fn install_uab_inner(
                 &mut repository,
                 &work,
                 &other_layers,
-                None,
                 &overlays,
                 &mut imported_layers,
             )
@@ -326,26 +399,47 @@ async fn install_uab_inner(
         }
 
         merge_modules_best_effort(&mut repository);
-        execute_post_install(&repository, &target, INSTALL_FAILED)?;
-        if selected_info.kind == "app" && !extra_only {
-            repository
-                .export_reference(&target)
-                .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
-            if let Some(installed) = &local {
+        if selected_info.kind == "app" {
+            if extra_only {
+                for layer in &app_layers {
+                    repository
+                        .export_app_reference(&target, Some(&layer.info.module))
+                        .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+                }
+            } else {
                 repository
-                    .unexport_reference(installed)
+                    .export_app_reference(&target, None)
                     .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
-                try_uninstall_reference(&mut repository, installed, INSTALL_FAILED).await?;
-                prune_after_change(&mut repository, !options.no_auto_prune.unwrap_or(false)).await;
+                if let Some(installed) = &local {
+                    repository
+                        .unexport_app_reference(installed, None)
+                        .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+                    try_uninstall_reference(&mut repository, installed, INSTALL_FAILED).await?;
+                    prune_after_change(&mut repository, !options.no_auto_prune.unwrap_or(false))
+                        .await;
+                }
             }
         }
+        post_install_attempted = true;
+        execute_post_install_best_effort(&repository, &target, INSTALL_FAILED);
         Ok(())
     }
     .await;
     let _ = fs::remove_dir_all(&work);
     if result.is_err() {
-        let _ = repository.unexport_reference(&target);
+        if selected_info.kind == "app" {
+            if extra_only {
+                for layer in &app_layers {
+                    let _ = repository.unexport_app_reference(&target, Some(&layer.info.module));
+                }
+            } else {
+                let _ = repository.unexport_app_reference(&target, None);
+            }
+        }
         rollback_uab_layers(&mut repository, &imported_layers).await;
+        if post_install_attempted {
+            execute_post_uninstall(&target);
+        }
     }
     result?;
     let message = "install uab successfully";
@@ -414,55 +508,19 @@ fn validate_uab_extra_modules(
 
 fn validate_uab_layout(
     layers: &[UabLayer],
-    executable_mode: bool,
 ) -> Result<(Vec<UabLayer>, Vec<UabLayer>), OperationError> {
     let (app_layers, other_layers): (Vec<_>, Vec<_>) = layers
         .iter()
         .cloned()
         .partition(|layer| layer.info.kind == "app");
-    if executable_mode {
-        let app_info = &app_layers
-            .first()
-            .ok_or_else(|| OperationError::new(INSTALL_FAILED, "no app layers found"))?
-            .info;
-        if let Some(runtime) = app_info.runtime.as_deref() {
-            let bundled_runtime = other_layers
-                .first()
-                .ok_or_else(|| OperationError::new(INSTALL_FAILED, "runtime layer not found"))?;
-            let runtime_fuzzy = runtime
-                .parse::<FuzzyReference>()
-                .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
-            let runtime_reference = reference_from_info(&bundled_runtime.info)
-                .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
-            if runtime_fuzzy.id != runtime_reference.id
-                || app_info.channel != runtime_reference.channel
-            {
-                return Err(OperationError::new(
-                    INSTALL_FAILED,
-                    "runtime layer not matched",
-                ));
-            }
-            if runtime_fuzzy
-                .version
-                .as_ref()
-                .is_some_and(|version| !runtime_reference.version.semantic_match(version))
-            {
-                return Err(OperationError::new(
-                    INSTALL_FAILED,
-                    "runtime layer version not matched",
-                ));
-            }
-        }
-    } else {
-        if app_layers.is_empty() && other_layers.is_empty() {
-            return Err(OperationError::new(INSTALL_FAILED, "no layers found"));
-        }
-        if !app_layers.is_empty() && !other_layers.is_empty() {
-            return Err(OperationError::new(
-                INSTALL_FAILED,
-                "layers from multiple packages found",
-            ));
-        }
+    if app_layers.is_empty() && other_layers.is_empty() {
+        return Err(OperationError::new(INSTALL_FAILED, "no layers found"));
+    }
+    if !app_layers.is_empty() && !other_layers.is_empty() {
+        return Err(OperationError::new(
+            INSTALL_FAILED,
+            "layers from multiple packages found",
+        ));
     }
     validate_uab_group(&app_layers)?;
     validate_uab_group(&other_layers)?;
@@ -472,14 +530,12 @@ fn validate_uab_layout(
 struct ImportedUabLayer {
     reference: Reference,
     module: String,
-    sub_ref: Option<String>,
 }
 
 async fn import_uab_layers(
     repository: &mut LocalRepository,
     bundle: &Path,
     layers: &[UabLayer],
-    sub_ref: Option<&str>,
     overlays: &[std::path::PathBuf],
     imported_layers: &mut Vec<ImportedUabLayer>,
 ) -> Result<(), OperationError> {
@@ -511,13 +567,15 @@ async fn import_uab_layers(
         let reference = reference_from_info(&disk_info)
             .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
         repository
-            .import_layer_dir(&directory, overlays, sub_ref)
+            .import_layer_dir(&directory, overlays)
             .await
+            .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+        repository
+            .export_layer_sign_data(&reference, &disk_info.module)
             .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
         imported_layers.push(ImportedUabLayer {
             reference,
             module: disk_info.module,
-            sub_ref: sub_ref.map(str::to_string),
         });
     }
     Ok(())
@@ -529,20 +587,12 @@ async fn rollback_uab_layers(
 ) {
     for layer in imported_layers.iter().rev() {
         if let Err(error) = repository
-            .remove_layer_with_sub_ref(&layer.reference, &layer.module, layer.sub_ref.as_deref())
+            .remove_layer(&layer.reference, &layer.module)
             .await
         {
             eprintln!(
                 "warning: failed to roll back UAB layer {}/{}: {error}",
                 layer.reference, layer.module
-            );
-        }
-        if let Err(error) =
-            InstallHooks::load().and_then(|hooks| hooks.post_uninstall(&layer.reference.id))
-        {
-            eprintln!(
-                "warning: failed to run rollback uninstall hook for {}: {error:#}",
-                layer.reference
             );
         }
     }
@@ -646,13 +696,8 @@ async fn install_layer_inner(
             )
             .await?;
             if let Some(runtime) = package_info.runtime.as_deref() {
-                ensure_dependency(
-                    &mut repository,
-                    runtime,
-                    &package_info.channel,
-                    &context,
-                )
-                .await?;
+                ensure_dependency(&mut repository, runtime, &package_info.channel, &context)
+                    .await?;
             }
         }
 
@@ -661,52 +706,40 @@ async fn install_layer_inner(
             .await
             .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
         repository
-            .import_layer_dir(&work, &[], None)
+            .import_layer_dir(&work, &[])
             .await
             .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
-        if !matches!(package_info.module.as_str(), "binary" | "runtime")
-            || package_info.kind != "app"
-        {
-            return Ok(());
-        }
-
-        execute_post_install(&repository, &target, INSTALL_FAILED)?;
+        repository
+            .export_layer_sign_data(&target, &package_info.module)
+            .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+        merge_modules_best_effort(&mut repository);
         let mut replaced = false;
-        if let Some(installed) = &local {
-            if repository.module_list(installed).contains(&package_info.module) {
-                let switched = async {
+        if package_info.kind == "app" {
+            if matches!(package_info.module.as_str(), "binary" | "runtime") {
+                if let Some(installed) = &local {
                     repository
-                        .export_reference(&target)
+                        .export_app_reference(&target, None)
                         .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
                     repository
-                        .unexport_reference(installed)
+                        .unexport_app_reference(installed, None)
                         .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
                     try_uninstall_reference(&mut repository, installed, INSTALL_FAILED).await?;
-                    Ok::<(), OperationError>(())
+                    replaced = true;
+                    merge_modules_best_effort(&mut repository);
+                } else {
+                    repository
+                        .export_app_reference(&target, None)
+                        .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
                 }
-                .await;
-                match switched {
-                    Ok(()) => {
-                        replaced = true;
-                        merge_modules_best_effort(&mut repository);
-                    }
-                    Err(error) => eprintln!(
-                        "warning: failed to remove old reference {installed} after install {target}: {}",
-                        error.message
-                    ),
-                }
+            } else {
+                repository
+                    .export_app_reference(&target, Some(&package_info.module))
+                    .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
             }
-        } else {
-            repository
-                .export_reference(&target)
-                .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
         }
+        execute_post_install_best_effort(&repository, &target, INSTALL_FAILED);
         if replaced {
-            prune_after_change(
-                &mut repository,
-                !options.no_auto_prune.unwrap_or(false),
-            )
-            .await;
+            prune_after_change(&mut repository, !options.no_auto_prune.unwrap_or(false)).await;
         }
         Ok(())
     }
@@ -917,31 +950,49 @@ async fn install_inner(
             .await?;
         }
 
-        if package_info.kind == "app" && !extra_only {
-            repository
-                .export_reference(&target)
-                .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
-            if let Some(installed) = local.take() {
+        merge_modules_best_effort(&mut repository);
+
+        if package_info.kind == "app" {
+            if extra_only {
+                for module in &install_modules {
+                    repository
+                        .export_app_reference(&target, Some(module))
+                        .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+                }
+            } else {
                 repository
-                    .unexport_reference(&installed)
+                    .export_app_reference(&target, None)
                     .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
-                try_uninstall_reference(&mut repository, &installed, INSTALL_FAILED).await?;
-                prune_after_change(
-                    &mut repository,
-                    !parameters.options.no_auto_prune.unwrap_or(false),
-                )
-                .await;
+                if let Some(installed) = local.take() {
+                    repository
+                        .unexport_app_reference(&installed, None)
+                        .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+                    try_uninstall_reference(&mut repository, &installed, INSTALL_FAILED).await?;
+                    prune_after_change(
+                        &mut repository,
+                        !parameters.options.no_auto_prune.unwrap_or(false),
+                    )
+                    .await;
+                }
             }
         }
+        execute_planned_post_install_hooks(&repository, &planned, INSTALL_FAILED);
         Ok(())
     }
     .await;
     if let Err(error) = install_result {
-        let _ = repository.unexport_reference(&target);
+        if package_info.kind == "app" {
+            if extra_only {
+                for module in &install_modules {
+                    let _ = repository.unexport_app_reference(&target, Some(module));
+                }
+            } else {
+                let _ = repository.unexport_app_reference(&target, None);
+            }
+        }
         let _ = try_uninstall_reference(&mut repository, &target, INSTALL_FAILED).await;
         return Err(error);
     }
-    merge_modules_best_effort(&mut repository);
     let message = format!(
         "Install {} (from repo: {}) success",
         target,
@@ -1007,11 +1058,16 @@ async fn uninstall_inner(
     if matches!(module.as_str(), "binary" | "runtime") {
         if info.kind == "app" {
             repository
-                .unexport_reference(&reference)
+                .unexport_app_reference(&reference, None)
                 .map_err(|error| OperationError::new(UNINSTALL_FAILED, error.to_string()))?;
         }
         remove_all_modules(&mut repository, &reference, UNINSTALL_FAILED).await?;
     } else {
+        if info.kind == "app" {
+            repository
+                .unexport_app_reference(&reference, Some(&module))
+                .map_err(|error| OperationError::new(UNINSTALL_FAILED, error.to_string()))?;
+        }
         if !repository
             .remove_layer(&reference, &module)
             .await
@@ -1414,14 +1470,21 @@ async fn update_app(
             .await?;
         }
 
+        if !planned.is_empty() {
+            merge_modules_best_effort(repository);
+        }
+
         if let Some(remote) = &new_reference {
             repository
-                .export_reference(remote)
+                .export_app_reference(remote, None)
                 .map_err(|error| OperationError::new(UPDATE_FAILED, error.to_string()))?;
             repository
-                .unexport_reference(local)
+                .unexport_app_reference(local, None)
                 .map_err(|error| OperationError::new(UPDATE_FAILED, error.to_string()))?;
             try_uninstall_reference(repository, local, UPDATE_FAILED).await?;
+        }
+        if !planned.is_empty() {
+            execute_planned_post_install_hooks(repository, &planned, UPDATE_FAILED);
         }
         Ok(!planned.is_empty())
     }
@@ -1430,7 +1493,7 @@ async fn update_app(
     if result.is_err()
         && let Some(remote) = &new_reference
     {
-        let _ = repository.unexport_reference(remote);
+        let _ = repository.unexport_app_reference(remote, None);
         let _ = try_uninstall_reference(repository, remote, UPDATE_FAILED).await;
     }
     result
@@ -1452,6 +1515,9 @@ async fn gather_missing_install_dependency(
     let selection = select_remote(repository.config(), &fuzzy, None, INSTALL_NOT_FOUND).await?;
     let reference = reference_from_info(&selection.package)
         .map_err(|error| OperationError::new(INSTALL_FAILED, error.to_string()))?;
+    if planned.iter().any(|plan| plan.reference == reference) {
+        return Ok(());
+    }
     let metadata = repository
         .fetch_remote_metadata(&reference, &selection.repo, "binary", false)
         .await
@@ -1510,7 +1576,10 @@ async fn ensure_dependency(
         &mut download,
         &task_message,
     )
-    .await
+    .await?;
+    merge_modules_best_effort(repository);
+    execute_post_install_best_effort(repository, &reference, INSTALL_FAILED);
+    Ok(())
 }
 
 async fn gather_reference_update(
@@ -1541,6 +1610,12 @@ async fn gather_reference_update(
         return Ok(GatheredUpdate {
             remote: None,
             package_info: Some(info),
+        });
+    }
+    if planned.iter().any(|plan| plan.reference == remote) {
+        return Ok(GatheredUpdate {
+            remote: Some(remote),
+            package_info: Some(selection.package),
         });
     }
 
@@ -1808,46 +1883,43 @@ async fn install_remote_module(
     download: &mut DownloadProgress,
     task_message: &str,
 ) -> Result<(), OperationError> {
-    if repository
+    let restored = repository
         .restore_deleted_layer(reference, module)
-        .map_err(|error| OperationError::new(error_code, error.to_string()))?
-    {
-        return Ok(());
-    }
-    let (sender, receiver) = async_channel::unbounded();
-    let pull = async {
-        let progress_sender = sender.clone();
-        let result = repository
-            .pull_with_progress(reference, remote, module, move |bytes| {
-                let _ = progress_sender.try_send(bytes);
-            })
-            .await;
-        sender.close();
-        result
-    };
-    let report = async {
-        while let Ok(bytes) = receiver.recv().await {
-            download.fetched_size = download.fetched_size.saturating_add(bytes);
-            if download.total_size > 0 && download.needed_size > 0 {
-                let progress =
-                    (download.fetched_size as f64 * 100.0 / download.needed_size as f64).min(100.0);
-                context
-                    .update_progress(progress, task_message)
-                    .await
-                    .map_err(|error| OperationError::new(error_code, error.to_string()))?;
+        .map_err(|error| OperationError::new(error_code, error.to_string()))?;
+    if !restored {
+        let (sender, receiver) = async_channel::unbounded();
+        let pull = async {
+            let progress_sender = sender.clone();
+            let result = repository
+                .pull_with_progress(reference, remote, module, move |bytes| {
+                    let _ = progress_sender.try_send(bytes);
+                })
+                .await;
+            sender.close();
+            result
+        };
+        let report = async {
+            while let Ok(bytes) = receiver.recv().await {
+                download.fetched_size = download.fetched_size.saturating_add(bytes);
+                if download.total_size > 0 && download.needed_size > 0 {
+                    let progress = (download.fetched_size as f64 * 100.0
+                        / download.needed_size as f64)
+                        .min(100.0);
+                    context
+                        .update_progress(progress, task_message)
+                        .await
+                        .map_err(|error| OperationError::new(error_code, error.to_string()))?;
+                }
             }
-        }
-        Ok::<(), OperationError>(())
-    };
-    let (pulled, reported) = futures_lite::future::zip(pull, report).await;
-    reported?;
-    pulled.map_err(|error| OperationError::new(error_code, error.to_string()))?;
-    if let Err(error) = execute_post_install(repository, reference, error_code) {
-        eprintln!(
-            "warning: failed to execute post-install hook for {reference}: {}",
-            error.message
-        );
+            Ok::<(), OperationError>(())
+        };
+        let (pulled, reported) = futures_lite::future::zip(pull, report).await;
+        reported?;
+        pulled.map_err(|error| OperationError::new(error_code, error.to_string()))?;
     }
+    repository
+        .export_layer_sign_data(reference, module)
+        .map_err(|error| OperationError::new(error_code, error.to_string()))?;
     Ok(())
 }
 
@@ -1958,30 +2030,40 @@ fn execute_post_install(
     reference: &Reference,
     error_code: i64,
 ) -> Result<(), OperationError> {
-    let module = if repository.layer_item(reference, "binary").is_ok() {
-        "binary".to_string()
-    } else if repository.layer_item(reference, "runtime").is_ok() {
-        "runtime".to_string()
-    } else {
-        repository
-            .module_list(reference)
-            .into_iter()
-            .next()
-            .ok_or_else(|| {
-                OperationError::new(
-                    error_code,
-                    format!("installed layer not found: {reference}"),
-                )
-            })?
-    };
     let path = repository
-        .layer_path(reference, &module)
+        .merged_layer_path(reference)
         .map_err(|error| OperationError::new(error_code, error.to_string()))?;
     InstallHooks::load()
         .and_then(|hooks| hooks.post_install(&reference.id, &path))
         .map_err(|error| {
             OperationError::new(error_code, format!("post-install hook failed: {error:#}"))
         })
+}
+
+fn execute_post_install_best_effort(
+    repository: &LocalRepository,
+    reference: &Reference,
+    error_code: i64,
+) {
+    if let Err(error) = execute_post_install(repository, reference, error_code) {
+        eprintln!(
+            "warning: failed to execute post-install hook for {reference}: {}",
+            error.message
+        );
+    }
+}
+
+fn execute_planned_post_install_hooks(
+    repository: &LocalRepository,
+    planned: &[PlannedRemoteModule],
+    error_code: i64,
+) {
+    let mut executed = BTreeSet::new();
+    for plan in planned {
+        if executed.insert(plan.reference.to_string()) {
+            execute_post_install_best_effort(repository, &plan.reference, error_code);
+        }
+    }
 }
 
 fn matching_main_layers(
@@ -2146,6 +2228,7 @@ mod tests {
                 mirror_enabled: None,
                 name: "stable".to_string(),
                 priority: 0,
+                region: None,
                 url: "https://example.invalid/repo".to_string(),
             }],
             version: 2,
@@ -2222,29 +2305,18 @@ mod tests {
     }
 
     #[test]
-    fn uab_layout_constraints_match_upstream_modes() {
-        assert!(validate_uab_layout(&[], false).is_err());
-        assert!(validate_uab_layout(&[], true).is_err());
+    fn uab_layout_accepts_one_distribution_package() {
+        assert!(validate_uab_layout(&[]).is_err());
 
         let app = uab_layer("app.id", "app", "1.0.0", "binary");
-        assert!(validate_uab_layout(std::slice::from_ref(&app), true).is_ok());
-        assert!(validate_uab_layout(std::slice::from_ref(&app), false).is_ok());
+        assert!(validate_uab_layout(std::slice::from_ref(&app)).is_ok());
 
         let runtime = uab_layer("runtime.id", "runtime", "1.0.1", "runtime");
-        assert!(validate_uab_layout(&[app.clone(), runtime.clone()], false).is_err());
+        assert!(validate_uab_layout(std::slice::from_ref(&runtime)).is_ok());
+        assert!(validate_uab_layout(&[app.clone(), runtime]).is_err());
 
-        let mut app_with_runtime = app.clone();
-        app_with_runtime.info.runtime = Some("runtime.id/1.0".to_string());
-        assert!(validate_uab_layout(std::slice::from_ref(&app_with_runtime), true).is_err());
-        assert!(validate_uab_layout(&[app_with_runtime.clone(), runtime.clone()], true).is_ok());
-
-        let mut wrong_channel = runtime.clone();
-        wrong_channel.info.channel = "testing".to_string();
-        assert!(validate_uab_layout(&[app_with_runtime.clone(), wrong_channel], true).is_err());
-        let mut wrong_version = runtime;
-        wrong_version.info.version = "2.0.0".to_string();
-        let error = validate_uab_layout(&[app_with_runtime, wrong_version], true).unwrap_err();
-        assert_eq!(error.message, "runtime layer version not matched");
+        let develop = uab_layer("app.id", "app", "1.0.0", "develop");
+        assert!(validate_uab_layout(&[app, develop]).is_ok());
     }
 
     #[test]
@@ -2284,10 +2356,7 @@ mod tests {
         let extra = uab_layer("app.id", "app", "1.0.0", "lang_zh");
         assert!(validate_uab_extra_modules(&repository, std::slice::from_ref(&extra)).is_err());
 
-        repository
-            .import_layer_dir(&binary, &[], None)
-            .await
-            .unwrap();
+        repository.import_layer_dir(&binary, &[]).await.unwrap();
         assert!(validate_uab_extra_modules(&repository, std::slice::from_ref(&extra)).is_ok());
 
         let mut wrong_channel = extra.clone();
@@ -2314,13 +2383,10 @@ mod tests {
         write_layer(&app, &app_info, "old");
         write_layer(&runtime, &runtime_info, "runtime");
         let mut repository = LocalRepository::create(&root, test_config()).await.unwrap();
-        let old = repository.import_layer_dir(&app, &[], None).await.unwrap();
-        repository
-            .import_layer_dir(&runtime, &[], None)
-            .await
-            .unwrap();
+        let old = repository.import_layer_dir(&app, &[]).await.unwrap();
+        repository.import_layer_dir(&runtime, &[]).await.unwrap();
         fs::write(app.join("payload"), "new").unwrap();
-        repository.import_layer_dir(&app, &[], None).await.unwrap();
+        repository.import_layer_dir(&app, &[]).await.unwrap();
         let old_object = root
             .join("repo/objects")
             .join(&old.commit[..2])
@@ -2351,10 +2417,7 @@ mod tests {
         let info = test_info("app.id", "app", "1.0.0", "binary");
         write_layer(&source, &info, "app");
         let mut repository = LocalRepository::create(&root, test_config()).await.unwrap();
-        repository
-            .import_layer_dir(&source, &[], None)
-            .await
-            .unwrap();
+        repository.import_layer_dir(&source, &[]).await.unwrap();
         let reference = reference_from_info(&info).unwrap();
         assert!(repository.mark_layer_deleted(&reference, "binary").unwrap());
         let state = process_root

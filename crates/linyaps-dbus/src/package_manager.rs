@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::fmt;
 use std::fs::File;
 use std::future::Future;
 use std::os::fd::OwnedFd as StdOwnedFd;
@@ -8,21 +9,37 @@ use std::sync::Arc;
 use futures_lite::StreamExt;
 use linyaps_api::{
     CommonOptions, CommonResult, PackageInfoV2, PackageManagerInstallParameters,
-    PackageManagerJobInfo, PackageManagerPruneResult, PackageManagerSearchParameters,
-    PackageManagerTaskResult, PackageManagerUninstallParameters, PackageManagerUpdateParameters,
-    Repo, RepoConfigV2,
+    PackageManagerPruneResult, PackageManagerSearchParameters, PackageManagerTaskResult,
+    PackageManagerUninstallParameters, PackageManagerUpdateParameters, Repo, RepoConfigV2,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
-use zbus::object_server::SignalEmitter;
 use zvariant::{DeserializeDict, Fd, OwnedFd, OwnedValue, SerializeDict, Type, Value};
 
 use crate::task::{
     Task1Proxy, TaskCompletion, TaskContext, TaskJob, TaskQueue, TaskService, VariantMap,
-    common_result, new_task_id, owned_string, owned_strings,
+    common_result, owned_string, owned_strings,
 };
 
 type InteractionHandler<'a> = dyn Fn(i32, &VariantMap) -> bool + Send + Sync + 'a;
+type TaskEventHandler = dyn Fn(&str, &VariantMap) + Send + Sync;
+type TaskFinishedHandler = dyn Fn() + Send + Sync;
+
+#[derive(Clone)]
+struct TaskObserver {
+    event: Arc<TaskEventHandler>,
+    finished: Arc<TaskFinishedHandler>,
+}
+
+struct TaskObserverFinish(Option<TaskObserver>);
+
+impl Drop for TaskObserverFinish {
+    fn drop(&mut self) {
+        if let Some(observer) = &self.0 {
+            (observer.finished)();
+        }
+    }
+}
 
 pub const PACKAGE_MANAGER_SERVICE: &str = "org.deepin.linglong.PackageManager1";
 pub const PACKAGE_MANAGER_PATH: &str = "/org/deepin/linglong/PackageManager1";
@@ -35,6 +52,7 @@ struct RepoDict {
     mirror_enabled: Option<bool>,
     name: String,
     priority: i64,
+    region: Option<String>,
     url: String,
 }
 
@@ -54,6 +72,7 @@ impl From<Repo> for RepoDict {
             mirror_enabled: repo.mirror_enabled,
             name: repo.name,
             priority: repo.priority,
+            region: repo.region,
             url: repo.url,
         }
     }
@@ -66,6 +85,7 @@ impl From<RepoDict> for Repo {
             mirror_enabled: repo.mirror_enabled,
             name: repo.name,
             priority: repo.priority,
+            region: repo.region,
             url: repo.url,
         }
     }
@@ -128,12 +148,6 @@ trait PackageManager {
 
     #[zbus(name = "InitRunContext")]
     fn init_run_context(&self, config: &str, container_id: &str) -> zbus::Result<VariantMap>;
-
-    #[zbus(signal, name = "PruneFinished")]
-    fn prune_finished(&self, task_id: &str, result: VariantMap) -> zbus::Result<()>;
-
-    #[zbus(signal, name = "InitRunContextFinished")]
-    fn init_run_context_finished(&self, task_id: &str, success: bool) -> zbus::Result<()>;
 }
 
 #[derive(Debug, Error)]
@@ -153,15 +167,27 @@ pub struct PackageManagerClient {
     connection: zbus::blocking::Connection,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PackageManagerAsyncClient {
     connection: zbus::Connection,
+    task_observer: Option<TaskObserver>,
+}
+
+impl fmt::Debug for PackageManagerAsyncClient {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PackageManagerAsyncClient")
+            .field("connection", &self.connection)
+            .field("observes_tasks", &self.task_observer.is_some())
+            .finish()
+    }
 }
 
 impl PackageManagerAsyncClient {
     pub async fn system() -> Result<Self, PackageManagerError> {
         Ok(Self {
             connection: zbus::Connection::system().await?,
+            task_observer: None,
         })
     }
 
@@ -172,11 +198,32 @@ impl PackageManagerAsyncClient {
             .p2p()
             .build()
             .await?;
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            task_observer: None,
+        })
     }
 
     pub fn from_connection(connection: zbus::Connection) -> Self {
-        Self { connection }
+        Self {
+            connection,
+            task_observer: None,
+        }
+    }
+
+    pub fn observe_tasks<E, F>(&mut self, event: E, finished: F)
+    where
+        E: Fn(&str, &VariantMap) + Send + Sync + 'static,
+        F: Fn() + Send + Sync + 'static,
+    {
+        self.task_observer = Some(TaskObserver {
+            event: Arc::new(event),
+            finished: Arc::new(finished),
+        });
+    }
+
+    pub fn unique_name(&self) -> Option<String> {
+        self.connection.unique_name().map(ToString::to_string)
     }
 
     pub async fn configuration(&self) -> Result<RepoConfigV2, PackageManagerError> {
@@ -289,35 +336,8 @@ impl PackageManagerAsyncClient {
 
     pub async fn prune(&self) -> Result<PackageManagerPruneResult, PackageManagerError> {
         let proxy = PackageManagerProxy::new(&self.connection).await?;
-        let mut finished = proxy.receive_prune_finished().await?;
-        let job = parse_job_info(proxy.prune().await?);
-        if job.code != 0 {
-            return Err(PackageManagerError::Task {
-                code: job.code,
-                message: job.message,
-            });
-        }
-        loop {
-            let signal = finished.next().await.ok_or_else(|| {
-                PackageManagerError::Protocol(
-                    "package manager disappeared before prune completed".to_string(),
-                )
-            })?;
-            let args = signal
-                .args()
-                .map_err(|error| PackageManagerError::Protocol(error.to_string()))?;
-            if *args.task_id() != job.id {
-                continue;
-            }
-            let result = parse_prune_result(args.result())?;
-            if result.code != 0 {
-                return Err(PackageManagerError::Task {
-                    code: result.code,
-                    message: result.message,
-                });
-            }
-            return Ok(result);
-        }
+        let result = self.run_task(proxy.prune().await?, None).await?;
+        parse_prune_result(&result)
     }
 
     pub async fn init_run_context(
@@ -326,35 +346,9 @@ impl PackageManagerAsyncClient {
         container_id: &str,
     ) -> Result<(), PackageManagerError> {
         let proxy = PackageManagerProxy::new(&self.connection).await?;
-        let mut finished = proxy.receive_init_run_context_finished().await?;
-        let job = parse_job_info(proxy.init_run_context(config, container_id).await?);
-        if job.code != 0 {
-            return Err(PackageManagerError::Task {
-                code: job.code,
-                message: job.message,
-            });
-        }
-        loop {
-            let signal = finished.next().await.ok_or_else(|| {
-                PackageManagerError::Protocol(
-                    "package manager disappeared before run context initialization completed"
-                        .to_string(),
-                )
-            })?;
-            let args = signal
-                .args()
-                .map_err(|error| PackageManagerError::Protocol(error.to_string()))?;
-            if *args.task_id() != job.id {
-                continue;
-            }
-            if *args.success() {
-                return Ok(());
-            }
-            return Err(PackageManagerError::Task {
-                code: -1,
-                message: "InitRunContext failed".to_string(),
-            });
-        }
+        self.run_task(proxy.init_run_context(config, container_id).await?, None)
+            .await?;
+        Ok(())
     }
 
     async fn run_task(
@@ -379,32 +373,45 @@ impl PackageManagerAsyncClient {
             .await?;
         let mut finished = task.receive_task_finished().await?;
         let mut interactions = task.receive_request_interaction().await?;
+        let mut task_events = task.receive_task_event().await?;
+        let _observer_finish = TaskObserverFinish(self.task_observer.clone());
         task.start().await?;
         loop {
             enum Event {
                 Finished(Option<Result<VariantMap, String>>),
                 Interaction(Option<Result<(String, i32, VariantMap), String>>),
+                Task(Option<Result<(String, VariantMap), String>>),
             }
             let event = futures_lite::future::race(
+                futures_lite::future::race(
+                    async {
+                        Event::Finished(finished.next().await.map(|signal| {
+                            signal
+                                .args()
+                                .map(|args| args.result().clone())
+                                .map_err(|error| error.to_string())
+                        }))
+                    },
+                    async {
+                        Event::Interaction(interactions.next().await.map(|signal| {
+                            signal
+                                .args()
+                                .map(|args| {
+                                    (
+                                        args.interaction_id().to_string(),
+                                        *args.message_id(),
+                                        args.additional_message().clone(),
+                                    )
+                                })
+                                .map_err(|error| error.to_string())
+                        }))
+                    },
+                ),
                 async {
-                    Event::Finished(finished.next().await.map(|signal| {
+                    Event::Task(task_events.next().await.map(|signal| {
                         signal
                             .args()
-                            .map(|args| args.result().clone())
-                            .map_err(|error| error.to_string())
-                    }))
-                },
-                async {
-                    Event::Interaction(interactions.next().await.map(|signal| {
-                        signal
-                            .args()
-                            .map(|args| {
-                                (
-                                    args.interaction_id().to_string(),
-                                    *args.message_id(),
-                                    args.additional_message().clone(),
-                                )
-                            })
+                            .map(|args| (args.event().to_string(), args.data().clone()))
                             .map_err(|error| error.to_string())
                     }))
                 },
@@ -421,10 +428,12 @@ impl PackageManagerAsyncClient {
                     }
                     return Ok(result);
                 }
-                Event::Finished(Some(Err(error))) | Event::Interaction(Some(Err(error))) => {
+                Event::Finished(Some(Err(error)))
+                | Event::Interaction(Some(Err(error)))
+                | Event::Task(Some(Err(error))) => {
                     return Err(PackageManagerError::Protocol(error));
                 }
-                Event::Finished(None) => {
+                Event::Finished(None) | Event::Interaction(None) | Event::Task(None) => {
                     return Err(PackageManagerError::Protocol(
                         "task disappeared before completion".to_string(),
                     ));
@@ -440,7 +449,11 @@ impl PackageManagerAsyncClient {
                     );
                     task.reply_interaction(&interaction_id, reply).await?;
                 }
-                Event::Interaction(None) => {}
+                Event::Task(Some(Ok((event, data)))) => {
+                    if let Some(observer) = &self.task_observer {
+                        (observer.event)(&event, &data);
+                    }
+                }
             }
         }
     }
@@ -520,9 +533,9 @@ impl PackageManagerClient {
         Ok(parse_task_result(proxy.update(parameters)?))
     }
 
-    pub fn prune_job(&self) -> Result<PackageManagerJobInfo, PackageManagerError> {
+    pub fn prune_task(&self) -> Result<PackageManagerTaskResult, PackageManagerError> {
         let proxy = PackageManagerProxyBlocking::new(&self.connection)?;
-        Ok(parse_job_info(proxy.prune()?))
+        Ok(parse_task_result(proxy.prune()?))
     }
 }
 
@@ -569,7 +582,6 @@ pub struct PackageManagerService {
     authorize: Option<Arc<Authorize>>,
     tasks: TaskQueue,
     search_tasks: TaskQueue,
-    init_run_context_tasks: TaskQueue,
 }
 
 impl PackageManagerService {
@@ -596,7 +608,6 @@ impl PackageManagerService {
             authorize: None,
             tasks: TaskQueue::default(),
             search_tasks: TaskQueue::default(),
-            init_run_context_tasks: TaskQueue::default(),
         }
     }
 
@@ -902,7 +913,7 @@ impl PackageManagerService {
 
     async fn prune(
         &self,
-        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+        #[zbus(object_server)] object_server: &zbus::ObjectServer,
         #[zbus(header)] header: zbus::message::Header<'_>,
     ) -> zbus::fdo::Result<VariantMap> {
         self.authorize("org.deepin.linglong.PackageManager1.prune", &header)
@@ -910,28 +921,36 @@ impl PackageManagerService {
         let Some(prune) = self.prune.clone() else {
             return Ok(common_result(-1, "prune is unavailable"));
         };
-        let task_id = new_task_id();
-        let emitted_task_id = task_id.clone();
-        let emitter = emitter.to_owned();
-        let queue_emitter = emitter.clone();
-        self.tasks.enqueue(
-            &queue_emitter,
+        let job: TaskJob = Box::new(move |context| {
             Box::pin(async move {
-                let result = match prune().await {
-                    Ok(packages) => prune_result_map(0, "", packages),
-                    Err(message) => prune_result_map(-1, message, Vec::new()),
-                };
-                let _ = Self::prune_finished(&emitter, &emitted_task_id, &result).await;
-            }),
-        );
-        Ok(job_info_map(task_id, ""))
+                context
+                    .update_state_message("pruning")
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let packages = prune().await?;
+                Ok(TaskCompletion::new(
+                    "prune",
+                    prune_result_map(0, "", packages),
+                ))
+            })
+        });
+        register_operation_task(
+            object_server,
+            "waiting to prune".to_string(),
+            "prune task is pending".to_string(),
+            job,
+            self.tasks.clone(),
+            task_owner(&header),
+        )
+        .await
     }
 
     async fn init_run_context(
         &self,
         config: &str,
         container_id: &str,
-        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+        #[zbus(object_server)] object_server: &zbus::ObjectServer,
+        #[zbus(header)] header: zbus::message::Header<'_>,
     ) -> zbus::fdo::Result<VariantMap> {
         let Some(initialize) = self.init_run_context.clone() else {
             return Ok(common_result(
@@ -939,35 +958,27 @@ impl PackageManagerService {
                 "run context initialization is unavailable",
             ));
         };
-        let task_id = new_task_id();
-        let emitted_task_id = task_id.clone();
         let config = config.to_string();
         let container_id = container_id.to_string();
-        let emitter = emitter.to_owned();
-        let queue_emitter = emitter.clone();
-        self.init_run_context_tasks.enqueue(
-            &queue_emitter,
+        let job: TaskJob = Box::new(move |_| {
             Box::pin(async move {
-                let success = initialize(config, container_id).await.is_ok();
-                let _ = Self::init_run_context_finished(&emitter, &emitted_task_id, success).await;
-            }),
-        );
-        Ok(job_info_map(task_id, "InitRunContext queued"))
+                initialize(config, container_id).await?;
+                Ok(TaskCompletion::new(
+                    "InitRunContext succeed",
+                    common_result(0, "InitRunContext succeed"),
+                ))
+            })
+        });
+        register_operation_task(
+            object_server,
+            "InitRunContext".to_string(),
+            "InitRunContext queued".to_string(),
+            job,
+            self.tasks.clone(),
+            task_owner(&header),
+        )
+        .await
     }
-
-    #[zbus(signal, name = "PruneFinished")]
-    async fn prune_finished(
-        emitter: &SignalEmitter<'_>,
-        task_id: &str,
-        result: &VariantMap,
-    ) -> zbus::Result<()>;
-
-    #[zbus(signal, name = "InitRunContextFinished")]
-    async fn init_run_context_finished(
-        emitter: &SignalEmitter<'_>,
-        task_id: &str,
-        success: bool,
-    ) -> zbus::Result<()>;
 }
 
 async fn register_operation_task(
@@ -1094,33 +1105,6 @@ fn task_result_map(task_path: String, message: String) -> VariantMap {
     let mut result = common_result(0, message);
     result.insert("taskObjectPath".to_string(), owned_string(task_path));
     result
-}
-
-fn job_info_map(id: String, message: impl Into<String>) -> VariantMap {
-    let mut result = common_result(0, message);
-    result.insert("id".to_string(), owned_string(id));
-    result
-}
-
-fn parse_job_info(mut result: VariantMap) -> PackageManagerJobInfo {
-    PackageManagerJobInfo {
-        code: result
-            .remove("code")
-            .and_then(|value| i64::try_from(value).ok())
-            .unwrap_or(-1),
-        id: result
-            .remove("id")
-            .and_then(|value| String::try_from(value).ok())
-            .unwrap_or_default(),
-        message: result
-            .remove("message")
-            .and_then(|value| String::try_from(value).ok())
-            .unwrap_or_default(),
-        result_type: result
-            .remove("type")
-            .and_then(|value| String::try_from(value).ok())
-            .unwrap_or_default(),
-    }
 }
 
 fn parse_task_result(mut result: VariantMap) -> PackageManagerTaskResult {
@@ -1391,6 +1375,7 @@ mod tests {
                 mirror_enabled: Some(true),
                 name: "main".to_string(),
                 priority: 100,
+                region: Some("CN".to_string()),
                 url: "https://example.invalid".to_string(),
             }],
             version: 2,
@@ -1412,6 +1397,7 @@ mod tests {
                 mirror_enabled: None,
                 name: "stable".to_string(),
                 priority: 0,
+                region: None,
                 url: "https://stable.example".to_string(),
             }],
             version: 2,
@@ -1463,6 +1449,7 @@ mod tests {
                 mirror_enabled: None,
                 name: "stable".to_string(),
                 priority: 0,
+                region: None,
                 url: "https://stable.example".to_string(),
             }],
             version: 2,
@@ -1582,6 +1569,7 @@ mod tests {
                 mirror_enabled: Some(true),
                 name: "testing-origin".to_string(),
                 priority: 100,
+                region: Some("CN".to_string()),
                 url: "https://testing.example".to_string(),
             }],
             version: 2,
@@ -1647,7 +1635,23 @@ mod tests {
             "org.example.demo"
         );
 
-        let client = PackageManagerAsyncClient::from_connection(connection);
+        let observed_events = Arc::new(Mutex::new(Vec::new()));
+        let event_sink = Arc::clone(&observed_events);
+        let finished_count = Arc::new(Mutex::new(0));
+        let finished_sink = Arc::clone(&finished_count);
+        let mut client = PackageManagerAsyncClient::from_connection(connection);
+        client.observe_tasks(
+            move |event, data| {
+                if event == "state"
+                    && let Some(state) = data
+                        .get("state")
+                        .and_then(|value| <&str>::try_from(value).ok())
+                {
+                    event_sink.lock().unwrap().push(state.to_string());
+                }
+            },
+            move || *finished_sink.lock().unwrap() += 1,
+        );
         let packages = client
             .search(PackageManagerSearchParameters {
                 id: "org.example.second".to_string(),
@@ -1657,6 +1661,14 @@ mod tests {
             .unwrap();
         assert_eq!(packages["stable"][0].id, "org.example.second");
         assert_eq!(packages["stable"][0].size, 42);
+        assert!(
+            observed_events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|state| state == "Processing")
+        );
+        assert_eq!(*finished_count.lock().unwrap(), 1);
 
         let package_file =
             std::env::temp_dir().join(format!("linyaps-dbus-install-file-{}", std::process::id()));

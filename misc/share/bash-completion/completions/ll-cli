@@ -137,6 +137,8 @@ _ll_cli_completion() {
         local repo_subs="add remove update set-default show set-priority enable-mirror disable-mirror"
         if [[ "$prev" == "repo" ]]; then
             opts="$repo_subs"
+        elif [[ " ${words[*]} " =~ " enable-mirror " ]]; then
+            opts="--region"
         elif [[ " remove update set-default set-priority enable-mirror disable-mirror " =~ " $prev " ]]; then
             opts="$(__ll_cli_get_repo_alias_list)"
         elif [[ " ${words[*]} " =~ " add " ]]; then

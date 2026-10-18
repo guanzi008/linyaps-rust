@@ -292,6 +292,7 @@ fn parse_export(arguments: &[String]) -> Result<Command, ParseError> {
         compressor: None,
         icon: None,
         layer: false,
+        uabx: false,
         loader: None,
         no_develop: false,
         output: None,
@@ -299,6 +300,7 @@ fn parse_export(arguments: &[String]) -> Result<Command, ParseError> {
         modules: Vec::new(),
     };
     let mut layer_present = false;
+    let mut uabx_present = false;
     let mut icon_present = false;
     let mut loader_present = false;
     let mut output_present = false;
@@ -378,6 +380,10 @@ fn parse_export(arguments: &[String]) -> Result<Command, ParseError> {
                 export.layer = parse_bool_flag(name, attached)?;
                 layer_present = true;
             }
+            "--uabx" => {
+                export.uabx = parse_bool_flag(name, attached)?;
+                uabx_present = true;
+            }
             "--no-develop" => {
                 export.no_develop = parse_bool_flag(name, attached)?;
                 no_develop_present = true;
@@ -389,8 +395,17 @@ fn parse_export(arguments: &[String]) -> Result<Command, ParseError> {
     if icon_present && layer_present {
         return Err(excludes("--icon", "--layer"));
     }
+    if icon_present && !uabx_present {
+        return Err(requires("--icon", "--uabx"));
+    }
     if loader_present && layer_present {
         return Err(excludes("--layer", "--loader"));
+    }
+    if loader_present && !uabx_present {
+        return Err(requires("--loader", "--uabx"));
+    }
+    if uabx_present && layer_present {
+        return Err(excludes("--uabx", "--layer"));
     }
     if output_present && layer_present {
         return Err(excludes("--layer", "--output"));
@@ -577,9 +592,15 @@ fn parse_repo(arguments: &[String]) -> Result<Command, ParseError> {
                 .map_err(|_| conversion("PRIORITY", &raw))?;
             RepoCommand::SetPriority { alias, priority }
         }
-        "enable-mirror" => RepoCommand::EnableMirror {
-            alias: exact_required(rest, "ALIAS")?,
-        },
+        "enable-mirror" => {
+            let (positionals, options) = repo_values(rest, &["--region"])?;
+            let alias = required_at(&positionals, 0, "ALIAS")?;
+            reject_extra(&positionals, 1)?;
+            RepoCommand::EnableMirror {
+                alias,
+                region: options.get("--region").cloned(),
+            }
+        }
         "disable-mirror" => RepoCommand::DisableMirror {
             alias: exact_required(rest, "ALIAS")?,
         },
@@ -907,5 +928,18 @@ mod tests {
                 .to_string()
                 .starts_with("--no-develop requires --layer\n")
         );
+    }
+
+    #[test]
+    fn parses_uabx_mode_and_constraints() {
+        let cli = parse(&values(&["export", "--uabx"])).unwrap();
+        let Some(Command::Export(export)) = cli.command else {
+            panic!("export command expected");
+        };
+        assert!(export.uabx);
+
+        let error = parse(&values(&["export", "--uabx", "--layer"])).unwrap_err();
+        assert_eq!(error.code, 108);
+        assert!(error.to_string().starts_with("--uabx excludes --layer\n"));
     }
 }

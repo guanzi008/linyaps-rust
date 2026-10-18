@@ -269,6 +269,7 @@ fn apply_inode_metadata(
             Some(rustix::fs::Gid::from_raw(inode.gid)),
             flags,
         ) && error != rustix::io::Errno::PERM
+            && error != rustix::io::Errno::INVAL
             && error != rustix::io::Errno::NOTSUP
         {
             return Err(LayerFileError::Io(std::io::Error::from_raw_os_error(

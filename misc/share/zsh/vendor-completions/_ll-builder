@@ -46,7 +46,7 @@ _ll-builder() {
                     ;;
                 export)
                     _arguments \
-                        '(-f --file)'{-f,--file} '--icon' '--layer' '--loader' '--no-develop' \
+                        '(-f --file)'{-f,--file} '--icon' '--layer' '--uabx' '--loader' '--no-develop' \
                         '(-o --output)'{-o,--output} '--modules' \
                         '(-z --compressor)'{-z,--compressor}': :(lz4 lzma zstd)' \
                         '--ref: :($( _ll_builder_get_commited_list ))' \
@@ -69,11 +69,14 @@ _ll-builder() {
                     ;;
                 repo)
                     if (( CURRENT == 2 )); then
-                        compadd add remove update set-default show enable-mirror disable-mirror
+                        compadd add remove update set-default show set-priority enable-mirror disable-mirror
                     else
                         case $words[2] in
-                            remove|update|set-default|enable-mirror|disable-mirror)
+                            remove|update|set-default|set-priority|disable-mirror)
                                 compadd $(_ll_builder_get_repo_name_list)
+                                ;;
+                            enable-mirror)
+                                _arguments '--region:region:' '*: :($(_ll_builder_get_repo_name_list))'
                                 ;;
                         esac
                     fi

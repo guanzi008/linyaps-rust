@@ -5,7 +5,8 @@ use anyhow::{Context, Result, bail};
 use linyaps_api::{BuilderProject, ExtensionImplementation, PackageInfoV2};
 use linyaps_core::{Architecture, FuzzyReference, Reference, Version, VersionV1};
 
-const EXAMPLE_TEMPLATE: &str = include_str!("../templates/example.yaml");
+const TEMPLATE_PATH: &str = "share/linglong/builder/templates/example.yaml";
+const DEVELOPMENT_TEMPLATE_PATH: &str = "misc/share/linglong/builder/templates/example.yaml";
 
 pub fn create_project(name: &str, current_directory: &Path) -> Result<PathBuf> {
     if name.is_empty() {
@@ -21,9 +22,44 @@ pub fn create_project(name: &str, current_directory: &Path) -> Result<PathBuf> {
     fs::create_dir_all(&directory)
         .with_context(|| format!("create project dir failed: {}", directory.display()))?;
     let project_file = directory.join("linglong.yaml");
-    fs::write(&project_file, EXAMPLE_TEMPLATE.replace("@ID@", name))
+    let template = find_builder_template()?;
+    let template = fs::read_to_string(&template)
+        .with_context(|| format!("Failed to read template file {}", template.display()))?;
+    fs::write(&project_file, template.replace("@ID@", name))
         .with_context(|| format!("Failed to write config file {}", project_file.display()))?;
     Ok(directory)
+}
+
+fn find_builder_template() -> Result<PathBuf> {
+    let executable =
+        fs::read_link("/proc/self/exe").context("failed to locate running executable")?;
+    find_builder_template_for_executable(&executable)
+}
+
+fn find_builder_template_for_executable(executable: &Path) -> Result<PathBuf> {
+    let parent = executable
+        .parent()
+        .with_context(|| format!("invalid executable path {}", executable.display()))?;
+    if parent.file_name().is_some_and(|name| name == "bin") {
+        let installed = parent
+            .parent()
+            .unwrap_or_else(|| Path::new("/"))
+            .join(TEMPLATE_PATH);
+        if installed.is_file() {
+            return Ok(installed);
+        }
+        bail!("builder file not found: {}", installed.display());
+    }
+    for directory in parent.ancestors() {
+        let candidate = directory.join(DEVELOPMENT_TEMPLATE_PATH);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    bail!(
+        "builder file not found near executable: {}",
+        executable.display()
+    )
 }
 
 pub fn locate_project_file(current_directory: &Path, requested: Option<&Path>) -> Result<PathBuf> {
@@ -220,5 +256,24 @@ build: echo build
         for version in ["1", "1.0.0.0", "01.0", "1.0-beta"] {
             assert!(!valid_dependency_version(version));
         }
+    }
+
+    #[test]
+    fn locates_installed_and_development_templates() {
+        let temporary = tempfile::tempdir().unwrap();
+        let executable = temporary.path().join("bin/ll-builder");
+        let installed = temporary.path().join(TEMPLATE_PATH);
+        fs::create_dir_all(installed.parent().unwrap()).unwrap();
+        fs::write(&installed, "version: 1\n").unwrap();
+        assert_eq!(
+            find_builder_template_for_executable(&executable).unwrap(),
+            installed
+        );
+
+        let development = find_builder_template_for_executable(
+            &std::env::current_exe().expect("test executable path"),
+        )
+        .unwrap();
+        assert!(development.ends_with(DEVELOPMENT_TEMPLATE_PATH));
     }
 }

@@ -183,6 +183,8 @@ pub struct Repo {
     pub mirror_enabled: Option<bool>,
     pub name: String,
     pub priority: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
     pub url: String,
 }
 impl Repo {
@@ -529,17 +531,6 @@ pub struct PackageManagerTaskResult {
     pub result_type: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct PackageManagerJobInfo {
-    pub code: i64,
-    pub id: String,
-    pub message: String,
-    #[serde(rename = "type", default)]
-    pub result_type: String,
-}
-
-pub type PackageManager1JobInfo = PackageManagerJobInfo;
-
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct PackageManagerSearchResult {
     pub code: i64,
@@ -742,6 +733,8 @@ pub struct RunContextConfig {
     pub cdi_devices: Option<Vec<CdiDeviceEntry>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extensions: Option<BTreeMap<String, Vec<String>>>,
+    #[serde(rename = "hostDynamic", skip_serializing_if = "Option::is_none")]
+    pub host_dynamic: Option<Vec<Mount>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instance: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -850,9 +843,12 @@ mod tests {
             mirror_enabled: Some(true),
             name: "main".to_string(),
             priority: 100,
+            region: Some("CN".to_string()),
             url: "https://example.invalid".to_string(),
         };
-        assert_eq!(serde_json::to_value(repo).unwrap()["mirror_enabled"], true);
+        let value = serde_json::to_value(repo).unwrap();
+        assert_eq!(value["mirror_enabled"], true);
+        assert_eq!(value["region"], "CN");
     }
 
     #[test]

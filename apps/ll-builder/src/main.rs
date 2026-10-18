@@ -20,7 +20,6 @@ mod project;
 mod push;
 mod repo_ops;
 mod source;
-mod uab_packaging;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -50,7 +49,7 @@ enum Command {
     List,
     #[command(about = "Remove built linyaps app")]
     Remove(Remove),
-    #[command(about = "Export to linyaps layer or uab")]
+    #[command(about = "Export to linyaps layer, UAB, or UABX")]
     Export(Export),
     #[command(about = "Push linyaps app to remote repo")]
     Push(Push),
@@ -130,11 +129,13 @@ struct Export {
     file: Option<PathBuf>,
     #[arg(short = 'z', long, value_name = "X")]
     compressor: Option<String>,
-    #[arg(long, value_name = "FILE", conflicts_with = "layer")]
+    #[arg(long, value_name = "FILE", conflicts_with = "layer", requires = "uabx")]
     icon: Option<PathBuf>,
     #[arg(long)]
     layer: bool,
-    #[arg(long, value_name = "FILE", conflicts_with = "layer")]
+    #[arg(long, conflicts_with = "layer")]
+    uabx: bool,
+    #[arg(long, value_name = "FILE", conflicts_with = "layer", requires = "uabx")]
     loader: Option<PathBuf>,
     #[arg(long = "no-develop", requires = "layer")]
     no_develop: bool,
@@ -222,6 +223,8 @@ enum RepoCommand {
     },
     EnableMirror {
         alias: String,
+        #[arg(long)]
+        region: Option<String>,
     },
     DisableMirror {
         alias: String,
@@ -238,7 +241,7 @@ impl From<RepoCommand> for RepoOperation {
             RepoCommand::SetDefault { alias } => Self::SetDefault { alias },
             RepoCommand::Show => Self::Show,
             RepoCommand::SetPriority { alias, priority } => Self::SetPriority { alias, priority },
-            RepoCommand::EnableMirror { alias } => Self::EnableMirror { alias },
+            RepoCommand::EnableMirror { alias, region } => Self::EnableMirror { alias, region },
             RepoCommand::DisableMirror { alias } => Self::DisableMirror { alias },
         }
     }
@@ -419,6 +422,7 @@ async fn execute() -> Result<()> {
                     output: options.output,
                     reference: options.reference,
                     modules: options.modules,
+                    executable: options.uabx,
                 },
             )
             .await?;
@@ -477,5 +481,13 @@ mod tests {
         let build = include_str!("../help/build.txt");
         assert!(build.contains("Usage: ll-builder build"));
         assert!(!build.contains("Usage: ll-builder run"));
+    }
+
+    #[test]
+    fn uabx_options_require_executable_mode() {
+        assert!(Cli::try_parse_from(["ll-builder", "export", "--uabx"]).is_ok());
+        assert!(Cli::try_parse_from(["ll-builder", "export", "--uabx", "--layer"]).is_err());
+        assert!(Cli::try_parse_from(["ll-builder", "export", "--icon", "/missing"]).is_err());
+        assert!(Cli::try_parse_from(["ll-builder", "export", "--loader", "/missing"]).is_err());
     }
 }

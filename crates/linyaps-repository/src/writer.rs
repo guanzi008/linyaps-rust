@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+use std::os::unix::fs::{FileExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::Path;
 use std::str::FromStr;
 
@@ -12,7 +12,14 @@ use fs_erofs::mkfs::{
     build_image,
 };
 use linyaps_api::{LayerInfo, PackageInfoV2};
+use sha2::Digest as _;
 use thiserror::Error;
+
+use crate::uab::UabFile;
+use crate::uab_signature::{
+    SignatureEndian, UAB_META_SECTION, UAB_SIGNATURE_DIGEST_OFFSET, UAB_SIGNATURE_NOTE_SIZE,
+    UAB_SIGNATURE_SECTION, parse_signature_note,
+};
 
 const LAYER_MAGIC_PREFIX: &[u8] = b"<<< deepin linglong layer archive >>>";
 const LAYER_MAGIC_LENGTH: usize = 40;
@@ -77,6 +84,8 @@ pub enum UabWriteError {
     InvalidElf(String),
     #[error("invalid ELF section name: {0}")]
     InvalidName(String),
+    #[error("invalid UAB signature section: {0}")]
+    InvalidSignature(String),
     #[error("UAB is too large for this ELF class")]
     TooLarge,
 }
@@ -585,6 +594,61 @@ pub fn append_elf_sections(
     Ok(())
 }
 
+pub fn write_uab_sections(
+    template: impl AsRef<Path>,
+    output: impl AsRef<Path>,
+    sections: &[(&str, &[u8])],
+) -> Result<(), UabWriteError> {
+    let output = output.as_ref();
+    let metadata = sections
+        .iter()
+        .find_map(|(name, data)| (*name == UAB_META_SECTION).then_some(*data))
+        .ok_or_else(|| UabWriteError::InvalidName(UAB_META_SECTION.to_string()))?;
+    append_elf_sections(template, output, sections)?;
+
+    let uab = UabFile::open(output)
+        .map_err(|error| UabWriteError::InvalidSignature(error.to_string()))?;
+    let signature = uab
+        .section(UAB_SIGNATURE_SECTION)
+        .map_err(|error| UabWriteError::InvalidSignature(error.to_string()))?
+        .clone();
+    let note = uab
+        .read_section(UAB_SIGNATURE_SECTION)
+        .map_err(|error| UabWriteError::InvalidSignature(error.to_string()))?;
+    drop(uab);
+    if note.len() != UAB_SIGNATURE_NOTE_SIZE {
+        return Err(UabWriteError::InvalidSignature(format!(
+            "section {UAB_SIGNATURE_SECTION} has size {}, expected {UAB_SIGNATURE_NOTE_SIZE}",
+            note.len()
+        )));
+    }
+
+    let file = OpenOptions::new().read(true).write(true).open(output)?;
+    let mut identity = [0_u8; 6];
+    file.read_exact_at(&mut identity, 0)?;
+    let endian = match identity[5] {
+        ELFDATA2LSB => SignatureEndian::Little,
+        ELFDATA2MSB => SignatureEndian::Big,
+        value => {
+            return Err(UabWriteError::InvalidElf(format!(
+                "unknown data encoding {value}"
+            )));
+        }
+    };
+    parse_signature_note(&note, endian).ok_or_else(|| {
+        UabWriteError::InvalidSignature(format!(
+            "section {UAB_SIGNATURE_SECTION} has an invalid note layout"
+        ))
+    })?;
+    let digest = linyaps_core::hex_encode(sha2::Sha256::digest(metadata));
+    file.write_all_at(
+        digest.as_bytes(),
+        signature.offset + UAB_SIGNATURE_DIGEST_OFFSET as u64,
+    )?;
+    file.sync_all()?;
+    Ok(())
+}
+
 fn align(bytes: &mut Vec<u8>, alignment: usize) {
     let padding = (alignment - bytes.len() % alignment) % alignment;
     bytes.resize(bytes.len() + padding, 0);
@@ -735,9 +799,16 @@ mod tests {
             version: "1".to_string(),
         };
         let metadata = serde_json::to_vec(&metadata).unwrap();
-        let output = temporary.path().join("demo.uab");
+        let template = temporary.path().join("uab-header");
         append_elf_sections(
             std::env::current_exe().unwrap(),
+            &template,
+            &[(UAB_SIGNATURE_SECTION, crate::UAB_SIGNATURE_NOTE.as_slice())],
+        )
+        .unwrap();
+        let output = temporary.path().join("demo.uab");
+        write_uab_sections(
+            &template,
             &output,
             &[
                 ("linglong.bundle", bundle.as_slice()),

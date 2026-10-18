@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicI32, Ordering};
 
 use linyaps_api::UabMetaInfo;
-use linyaps_repository::UabFile;
+use linyaps_repository::{UAB_SIGNATURE_NOTE, UAB_SIGNATURE_NOTE_SIZE, UabFile};
 use serde::Serialize;
 
 mod readonly_fs;
@@ -33,6 +33,13 @@ Options:
 
 static RECEIVED_SIGNAL: AtomicI32 = AtomicI32::new(0);
 static CHILD_PID: AtomicI32 = AtomicI32::new(0);
+
+#[repr(C, align(4))]
+struct AlignedUabSignature([u8; UAB_SIGNATURE_NOTE_SIZE]);
+
+#[used]
+#[unsafe(link_section = ".note.uab.sig")]
+static UAB_SIGNATURE: AlignedUabSignature = AlignedUabSignature(UAB_SIGNATURE_NOTE);
 
 #[derive(Debug, Default, Eq, PartialEq)]
 struct HeaderOptions {
@@ -419,6 +426,7 @@ fn execute() -> Result<i32, String> {
 }
 
 fn main() {
+    std::hint::black_box(&UAB_SIGNATURE);
     let code = match execute() {
         Ok(code) => code,
         Err(error) => {

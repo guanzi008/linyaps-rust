@@ -97,6 +97,7 @@ fn fallback_repository_config() -> Result<RepoConfigV2> {
             mirror_enabled: None,
             name: "stable".to_string(),
             priority: 0,
+            region: None,
             url: "https://mirror-repo-linglong.deepin.com".to_string(),
         }],
         version: 2,

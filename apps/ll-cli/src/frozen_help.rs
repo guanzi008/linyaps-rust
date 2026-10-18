@@ -67,6 +67,7 @@ fn help_key(path: &[&str], expanded: bool) -> &'static str {
         (["prune"], _) => "prune",
         (["inspect"], _) => "inspect",
         (["inspect", "dir"], _) => "inspect_dir",
+        (["inspect", "remote-info"], _) => "inspect_remote-info",
         _ => "root",
     }
 }
@@ -108,7 +109,7 @@ fn command_path(arguments: &[OsString]) -> Vec<&str> {
             "enable-mirror",
             "disable-mirror",
         ],
-        "inspect" => &["dir"],
+        "inspect" => &["dir", "remote-info"],
         _ => &[],
     };
     if let Some(child) = arguments[index + 1..]
@@ -153,6 +154,7 @@ fn help(key: &str) -> &'static str {
         "prune" => include_str!("../help/prune.txt"),
         "inspect" => include_str!("../help/inspect.txt"),
         "inspect_dir" => include_str!("../help/inspect_dir.txt"),
+        "inspect_remote-info" => include_str!("../help/inspect_remote-info.txt"),
         _ => include_str!("../help/root.txt"),
     }
 }

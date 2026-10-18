@@ -2758,7 +2758,7 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "linyaps-api"
-version = "1.14.0"
+version = "1.15.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2766,7 +2766,7 @@ dependencies = [
 
 [[package]]
 name = "linyaps-core"
-version = "1.14.0"
+version = "1.15.0"
 dependencies = [
  "linyaps-api",
  "oci-spec",
@@ -2783,7 +2783,7 @@ dependencies = [
 
 [[package]]
 name = "linyaps-dbus"
-version = "1.14.0"
+version = "1.15.0"
 dependencies = [
  "async-channel",
  "async-io",
@@ -2799,11 +2799,11 @@ dependencies = [
 
 [[package]]
 name = "linyaps-i18n"
-version = "1.14.0"
+version = "1.15.0"
 
 [[package]]
 name = "linyaps-repository"
-version = "1.14.0"
+version = "1.15.0"
 dependencies = [
  "am-fs-core",
  "am-fs-erofs",
@@ -2824,7 +2824,7 @@ dependencies = [
 
 [[package]]
 name = "linyaps-uab"
-version = "1.14.0"
+version = "1.15.0"
 dependencies = [
  "am-fs-core",
  "am-fs-erofs",
@@ -2847,7 +2847,7 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
 name = "ll-builder"
-version = "1.14.0"
+version = "1.15.0"
 dependencies = [
  "anyhow",
  "bzip2",
@@ -2876,7 +2876,7 @@ dependencies = [
 
 [[package]]
 name = "ll-cli"
-version = "1.14.0"
+version = "1.15.0"
 dependencies = [
  "clap",
  "libc",
@@ -2898,7 +2898,7 @@ dependencies = [
 
 [[package]]
 name = "ll-driver-detect"
-version = "1.14.0"
+version = "1.15.0"
 dependencies = [
  "futures-lite",
  "libc",
@@ -2914,14 +2914,14 @@ dependencies = [
 
 [[package]]
 name = "ll-init"
-version = "1.14.0"
+version = "1.15.0"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "ll-package-manager"
-version = "1.14.0"
+version = "1.15.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2944,7 +2944,7 @@ dependencies = [
 
 [[package]]
 name = "ll-system-helper"
-version = "1.14.0"
+version = "1.15.0"
 dependencies = [
  "anyhow",
  "clap",

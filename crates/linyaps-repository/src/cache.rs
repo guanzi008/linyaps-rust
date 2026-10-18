@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use linyaps_api::{
     RepoConfigV2, RepositoryCache, RepositoryCacheLayersItem, RepositoryCacheMergedItem,
 };
+use linyaps_core::shared_fs::{SHARED_FILE_MODE, write_file_with_mode};
 use thiserror::Error;
 
 pub const CACHE_VERSION: &str = "2";
@@ -82,7 +83,17 @@ impl RepositoryCacheStore {
     }
 
     pub fn write_to_disk(&self) -> Result<(), CacheError> {
-        fs::write(&self.path, serde_json::to_vec(&self.data)?)?;
+        write_file_with_mode(
+            &self.path,
+            serde_json::to_vec(&self.data)?,
+            SHARED_FILE_MODE,
+        )?;
+        let version = self
+            .path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(".version");
+        let _ = write_file_with_mode(version, env!("CARGO_PKG_VERSION"), SHARED_FILE_MODE);
         Ok(())
     }
 

@@ -14,7 +14,7 @@ Subcommands:
   run                         Run built linyaps app
   list                        List built linyaps app
   remove                      Remove built linyaps app
-  export                      Export to linyaps layer or uab
+  export                      Export to linyaps layer, UAB, or UABX
   push                        Push linyaps app to remote repo
   import                      Import linyaps layer to build repo
   extract                     Extract linyaps layer to dir

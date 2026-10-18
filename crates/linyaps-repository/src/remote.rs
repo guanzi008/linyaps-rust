@@ -442,6 +442,63 @@ impl RemoteRepositoryClient {
         format!("{}{path}", self.base_url)
     }
 
+    fn mirrorlist_endpoint(&self, repo: &Repo) -> String {
+        let mut endpoint = self.endpoint("/api/v2/mirrors/stable");
+        if let Some(region) = repo.region.as_deref().filter(|region| !region.is_empty()) {
+            endpoint.push_str("?region=");
+            endpoint.push_str(region);
+        }
+        endpoint
+    }
+
+    async fn object_urls(&self, repo: &Repo, relative: &str) -> Result<Vec<String>, RemoteError> {
+        if !repo.mirror_enabled.unwrap_or(false) {
+            return Ok(vec![
+                self.endpoint(&format!("/repos/{}/objects/{relative}", repo.name)),
+            ]);
+        }
+        let mirrorlist = self
+            .client
+            .get(self.mirrorlist_endpoint(repo))
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?;
+        let urls = mirrorlist
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(|base| format!("{}/objects/{relative}", base.trim_end_matches('/')))
+            .collect::<Vec<_>>();
+        if urls.is_empty() {
+            return Err(RemoteError::InvalidObject(
+                "mirror list contains no usable URLs".to_string(),
+            ));
+        }
+        Ok(urls)
+    }
+
+    async fn object_response(
+        &self,
+        repo: &Repo,
+        relative: &str,
+    ) -> Result<reqwest::Response, RemoteError> {
+        let mut last_error = None;
+        for url in self.object_urls(repo, relative).await? {
+            match self.client.get(url).send().await {
+                Ok(response) => match response.error_for_status() {
+                    Ok(response) => return Ok(response),
+                    Err(error) => last_error = Some(error),
+                },
+                Err(error) => last_error = Some(error),
+            }
+        }
+        Err(RemoteError::Request(
+            last_error.expect("object URL list is non-empty"),
+        ))
+    }
+
     pub(crate) async fn resolve_layer(
         &self,
         reference: &Reference,
@@ -497,13 +554,14 @@ impl RemoteRepositoryClient {
         let bytes = if destination.is_file() {
             fs::read(&destination)?
         } else {
-            let response = self
-                .client
-                .get(self.endpoint(&format!("/repos/{}/objects/{relative}", repo.name)))
-                .send()
-                .await?
-                .error_for_status()?;
+            let response = self.object_response(repo, &relative).await?;
             let bytes = response.bytes().await?.to_vec();
+            let actual = Checksum::sha256(&bytes);
+            if &actual != checksum {
+                return Err(RemoteError::InvalidObject(format!(
+                    "checksum mismatch for {relative}: expected {checksum}, got {actual}"
+                )));
+            }
             write_object(&destination, &bytes)?;
             if let Some(progress) = progress {
                 progress(bytes.len() as u64);
@@ -535,12 +593,7 @@ impl RemoteRepositoryClient {
             fs::create_dir_all(parent)?;
         }
         let temporary = destination.with_extension("filez.part");
-        let response = self
-            .client
-            .get(self.endpoint(&format!("/repos/{}/objects/{relative}", repo.name)))
-            .send()
-            .await?
-            .error_for_status()?;
+        let response = self.object_response(repo, &relative).await?;
         let mut stream = response.bytes_stream();
         let mut output = fs::File::create(&temporary)?;
         while let Some(chunk) = stream.next().await {
@@ -726,7 +779,7 @@ mod tests {
         assert!(
             request
                 .to_ascii_lowercase()
-                .contains("user-agent: linglong/1.14.0-dev")
+                .contains("user-agent: linglong/1.15.0-dev")
         );
         let body = request.split_once("\r\n\r\n").unwrap().1;
         assert_eq!(
@@ -749,6 +802,7 @@ mod tests {
             mirror_enabled: None,
             name: "stable".to_string(),
             priority: 0,
+            region: None,
             url: "https://mirror-repo-linglong.deepin.com".to_string(),
         };
         let reference = "main:org.deepin.calculator/6.5.37.1/x86_64"
@@ -781,6 +835,7 @@ mod tests {
                     mirror_enabled: None,
                     name: "origin".to_string(),
                     priority: 0,
+                    region: None,
                     url: "unused".to_string(),
                 },
                 true,
@@ -895,6 +950,23 @@ mod tests {
     }
 
     #[test]
+    fn mirrorlist_url_includes_configured_region() {
+        let client = RemoteRepositoryClient::new("https://repo.example/").unwrap();
+        let repo = Repo {
+            alias: Some("stable".to_string()),
+            mirror_enabled: Some(true),
+            name: "stable".to_string(),
+            priority: 0,
+            region: Some("CN".to_string()),
+            url: "https://repo.example".to_string(),
+        };
+        assert_eq!(
+            client.mirrorlist_endpoint(&repo),
+            "https://repo.example/api/v2/mirrors/stable?region=CN"
+        );
+    }
+
+    #[test]
     fn remote_packages_select_latest_and_collect_modules() {
         fn package(version: &str, module: &str) -> PackageInfoV2 {
             PackageInfoV2 {
@@ -923,6 +995,7 @@ mod tests {
             mirror_enabled: None,
             name: "stable-origin".to_string(),
             priority: 100,
+            region: None,
             url: "unused".to_string(),
         };
         let testing = Repo {
@@ -930,6 +1003,7 @@ mod tests {
             mirror_enabled: None,
             name: "testing-origin".to_string(),
             priority: 0,
+            region: None,
             url: "unused".to_string(),
         };
         let mut packages = RemotePackages::default();

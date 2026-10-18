@@ -850,7 +850,7 @@ async fn commit_modules(
         let info = package_info(project, module, size)?;
         fs::write(directory.join("info.json"), serde_json::to_vec(&info)?)?;
         fs::copy(project_file, directory.join("linglong.yaml"))?;
-        repository.import_layer_dir(&directory, &[], None).await?;
+        repository.import_layer_dir(&directory, &[]).await?;
         eprintln!("{} {} {} complete", info.id, info.version, module);
     }
     repository.merge_modules()?;

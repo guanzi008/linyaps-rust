@@ -1,3 +1,13 @@
+linyaps-rust (1.15.0~rust1-1) unstable; urgency=medium
+
+  * Synchronize behavior with linyaps 1.15.0.
+  * Add UABX export, module-aware entries, signatures, mirrors, and regions.
+  * Preserve runtime exit status and authorize the exact D-Bus caller on Arch.
+  * Restore Task1 progress, message, and no-progress CLI behavior.
+  * Preserve desktop export locations and rootless EROFS metadata restores.
+
+ -- guanzi008 <20619190+guanzi008@users.noreply.github.com>  Sun, 18 Oct 2026 18:00:00 +0800
+
 linyaps-rust (1.14.0~rust1-5) unstable; urgency=medium
 
   * Align direct Rust crate dependencies with Debian sid.

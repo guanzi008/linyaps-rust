@@ -26,6 +26,7 @@ pub enum RepoOperation {
     },
     EnableMirror {
         alias: String,
+        region: Option<String>,
     },
     DisableMirror {
         alias: String,
@@ -81,6 +82,7 @@ pub fn apply_repo_operation(
                 mirror_enabled: None,
                 name,
                 priority: 0,
+                region: None,
                 url,
             });
             Ok(RepoOperationResult::Changed)
@@ -98,7 +100,7 @@ fn apply_existing_repo_operation(
         | RepoOperation::Update { alias, .. }
         | RepoOperation::SetDefault { alias }
         | RepoOperation::SetPriority { alias, .. }
-        | RepoOperation::EnableMirror { alias }
+        | RepoOperation::EnableMirror { alias, .. }
         | RepoOperation::DisableMirror { alias } => alias.clone(),
         RepoOperation::Add { .. } | RepoOperation::Modify | RepoOperation::Show => unreachable!(),
     };
@@ -135,8 +137,9 @@ fn apply_existing_repo_operation(
             config.repos[index].url = normalized_url(url)?;
             Ok(RepoOperationResult::Changed)
         }
-        RepoOperation::EnableMirror { .. } => {
+        RepoOperation::EnableMirror { region, .. } => {
             config.repos[index].mirror_enabled = Some(true);
+            config.repos[index].region = region;
             Ok(RepoOperationResult::Changed)
         }
         RepoOperation::DisableMirror { .. } => {
@@ -191,6 +194,7 @@ mod tests {
                     mirror_enabled: Some(false),
                     name: "stable".to_string(),
                     priority: 10,
+                    region: None,
                     url: "https://stable.example".to_string(),
                 },
                 Repo {
@@ -198,6 +202,7 @@ mod tests {
                     mirror_enabled: Some(true),
                     name: "beta".to_string(),
                     priority: 20,
+                    region: None,
                     url: "https://beta.example".to_string(),
                 },
             ],
@@ -296,6 +301,7 @@ mod tests {
             &mut config,
             RepoOperation::EnableMirror {
                 alias: "stable".to_string(),
+                region: Some("CN".to_string()),
             },
         )
         .unwrap();
@@ -308,6 +314,7 @@ mod tests {
         .unwrap();
         assert_eq!(config.repos[0].priority, 42);
         assert_eq!(config.repos[0].mirror_enabled, Some(true));
+        assert_eq!(config.repos[0].region.as_deref(), Some("CN"));
         assert_eq!(config.repos[1].mirror_enabled, Some(false));
     }
 

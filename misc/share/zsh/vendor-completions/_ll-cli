@@ -78,8 +78,11 @@ _ll_cli() {
                                     '--alias:alias: ' \
                                     '*:repository name/URL:'
                                 ;;
-                            remove | set-default | set-priority | enable-mirror | disable-mirror | update)
+                            remove | set-default | set-priority | disable-mirror | update)
                                 _arguments -S -s $global_opts "*: :__ll_cli_get_repo_aliases"
+                                ;;
+                            enable-mirror)
+                                _arguments -S -s $global_opts '--region:region:' "*: :__ll_cli_get_repo_aliases"
                                 ;;
                         esac
                     fi

@@ -3,9 +3,9 @@
 ## 冻结目标
 
 - 上游仓库：[`OpenAtom-Linyaps/linyaps`](https://github.com/OpenAtom-Linyaps/linyaps)
-- 冻结提交：`9a258eeefd848122669f24c3d79703136b483d7a`
-- 对外版本：`1.14.0-dev`
-- 配套运行时提交：`OpenAtom-Linyaps/linyaps-box@2f6023b609f500b756b558bf0b87be4e504c53f5`
+- 冻结提交：`ed888bbe8007a40bbd056d534b75b2039335df42`
+- 对外版本：`1.15.0-dev`
+- 配套运行时提交：`OpenAtom-Linyaps/linyaps-box@ca5e503ea72553f65b3e4e4bfe86c707eeeb63ea`
 
 兼容判断以冻结提交的实际可执行行为、输出、D-Bus 接口、磁盘格式和安装布局为准，而不是后续上游分支。
 
@@ -16,6 +16,7 @@
 - PackageManager1、Task1、peer 服务、属性、信号、任务排队、交互、polkit 与直接模式。
 - 本地和远端 OSTree 对象、引用、提交、checkout、缓存、迁移、删除恢复、prune、上传及下载。
 - layer 文件、UAB ELF section、签名数据、纯 Rust EROFS 读写、校验和压缩格式。
+- UABX 分发包、目标架构 builder-utils、模块化 entries 导出和 ELF 签名数据生命周期。
 - builder 项目、依赖、源码、Debian source、模块、容器、检查、导入、导出和推送流程。
 - OCI 运行配置、CDI、扩展、Wayland、XDG、字体/动态链接缓存、应用配置和进程状态。
 - systemd、D-Bus、polkit、sysusers、tmpfiles、MIME、desktop、图标、补全、profile 和 97 份 locale 安装布局。

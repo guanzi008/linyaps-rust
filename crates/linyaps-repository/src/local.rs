@@ -8,9 +8,10 @@ use std::time::UNIX_EPOCH;
 
 use futures_lite::AsyncReadExt;
 use linyaps_api::{
-    PackageInfoV2, RepoConfigV2, RepositoryCacheLayersItem, RepositoryCacheMergedItem,
+    ExportDirs, PackageInfoV2, RepoConfigV2, RepositoryCacheLayersItem, RepositoryCacheMergedItem,
 };
 use linyaps_core::repository::{RepositoryConfigError, load_config, save_config};
+use linyaps_core::shared_fs::{SHARED_FILE_MODE, write_file_with_mode};
 use linyaps_core::{Architecture, FuzzyReference, Reference, Version};
 use ostrya::{
     CheckoutMode, CheckoutOptions, Checksum, CommitModifier, CommitModifierFlags, CommitOptions,
@@ -25,6 +26,9 @@ use crate::remote::ResolvedRemoteLayer;
 use crate::{CacheError, RemoteError, RemoteRepositoryClient, RepositoryCacheStore};
 
 const LOCAL_REMOTE: &str = "local";
+const ELF_VERIFY_PATH: &str = "share/deepin-elf-verify";
+const EXPORT_VERSION: &str = "1.0.0.4";
+const DEFAULT_EXPORT_DIRS: &str = include_str!("../../../misc/share/linglong/export-dirs.json");
 
 #[derive(Debug, Error)]
 pub enum RepositoryError {
@@ -128,12 +132,14 @@ impl LocalRepository {
             Ok(cache) => cache,
             Err(_) => rebuild_cache(&cache_path, config.clone(), &repo, &repo_path).await?,
         };
-        Ok(Self {
+        let repository = Self {
             root,
             config,
             repo,
             cache,
-        })
+        };
+        repository.ensure_entries_current()?;
+        Ok(repository)
     }
 
     pub async fn open(root: impl Into<PathBuf>) -> Result<Self, RepositoryError> {
@@ -142,12 +148,14 @@ impl LocalRepository {
         let config = load_config(&root.join("config.yaml"))?;
         let repo = Repo::open(&root.join("repo")).await?;
         let cache = RepositoryCacheStore::load(root.join("states.json"))?;
-        Ok(Self {
+        let repository = Self {
             root,
             config,
             repo,
             cache,
-        })
+        };
+        repository.ensure_entries_current()?;
+        Ok(repository)
     }
 
     pub fn root(&self) -> &Path {
@@ -352,14 +360,13 @@ impl LocalRepository {
         &mut self,
         directory: &Path,
         overlays: &[PathBuf],
-        sub_ref: Option<&str>,
     ) -> Result<ImportedLayer, RepositoryError> {
         let info: PackageInfoV2 = serde_json::from_slice(&fs::read(directory.join("info.json"))?)?;
         let reference = reference_from_info(&info)?;
         let mut directories = Vec::with_capacity(overlays.len() + 1);
         directories.push(directory.to_path_buf());
         directories.extend_from_slice(overlays);
-        self.import_directories(&reference, &info, &directories, sub_ref)
+        self.import_directories(&reference, &info, &directories)
             .await
     }
 
@@ -368,9 +375,8 @@ impl LocalRepository {
         reference: &Reference,
         info: &PackageInfoV2,
         directories: &[PathBuf],
-        sub_ref: Option<&str>,
     ) -> Result<ImportedLayer, RepositoryError> {
-        self.import_directories_from(reference, info, directories, sub_ref, LOCAL_REMOTE)
+        self.import_directories_from(reference, info, directories, LOCAL_REMOTE)
             .await
     }
 
@@ -379,7 +385,6 @@ impl LocalRepository {
         reference: &Reference,
         info: &PackageInfoV2,
         directories: &[PathBuf],
-        sub_ref: Option<&str>,
         source: &str,
     ) -> Result<ImportedLayer, RepositoryError> {
         if info.module.is_empty() {
@@ -409,7 +414,7 @@ impl LocalRepository {
         let commit = transaction
             .write_commit(CommitOptions::default(), &root)
             .await?;
-        let ref_name = ostree_ref(reference, &info.module, sub_ref)?;
+        let ref_name = ostree_ref(reference, &info.module)?;
         transaction.set_ref(&format!("{source}:{ref_name}"), Some(&commit));
         transaction.commit().await?;
 
@@ -905,7 +910,7 @@ impl LocalRepository {
             }
         }
 
-        let ref_name = ostree_ref(reference, &info.module, None)?;
+        let ref_name = ostree_ref(reference, &info.module)?;
         transaction.set_ref(&format!("{remote}:{ref_name}"), Some(commit_checksum));
         transaction.commit().await?;
 
@@ -946,38 +951,20 @@ impl LocalRepository {
         reference: &Reference,
         module: &str,
     ) -> Result<bool, RepositoryError> {
-        self.remove_layer_with_sub_ref(reference, module, None)
-            .await
-    }
-
-    pub async fn remove_layer_with_sub_ref(
-        &mut self,
-        reference: &Reference,
-        module: &str,
-        sub_ref: Option<&str>,
-    ) -> Result<bool, RepositoryError> {
         let item = match self.layer_item(reference, module) {
             Ok(item) => item,
             Err(RepositoryError::LayerNotFound(_, _)) => return Ok(false),
             Err(error) => return Err(error),
         };
-        self.remove_layer_item_with_sub_ref(&item, sub_ref).await
+        self.remove_layer_item(&item).await
     }
 
     pub async fn remove_layer_item(
         &mut self,
         item: &RepositoryCacheLayersItem,
     ) -> Result<bool, RepositoryError> {
-        self.remove_layer_item_with_sub_ref(item, None).await
-    }
-
-    pub async fn remove_layer_item_with_sub_ref(
-        &mut self,
-        item: &RepositoryCacheLayersItem,
-        sub_ref: Option<&str>,
-    ) -> Result<bool, RepositoryError> {
         let reference = reference_from_info(&item.info)?;
-        let ref_name = ostree_ref(&reference, &item.info.module, sub_ref)?;
+        let ref_name = ostree_ref(&reference, &item.info.module)?;
         let refspec = format!("{}:{ref_name}", item.repo);
         let actual = self.repo.resolve_rev(&refspec, true).await?;
         let unset = actual
@@ -991,6 +978,12 @@ impl LocalRepository {
                 let _ = self.repo.set_ref_immediate(&refspec, actual.as_ref()).await;
             }
             return Err(error.into());
+        }
+        if let Err(error) = self.unexport_layer_sign_data(item) {
+            eprintln!(
+                "warning: failed to unexport sign data for {}/{}: {error}",
+                item.info.id, item.info.module
+            );
         }
         if !self
             .cache
@@ -1123,42 +1116,203 @@ impl LocalRepository {
         Ok(())
     }
 
-    pub fn export_reference(&self, reference: &Reference) -> Result<(), RepositoryError> {
-        let item = self.layer_item(reference, "binary")?;
-        let layer = self.layer_path_for_item(&item)?;
-        let source_root = layer.join("entries");
+    pub fn export_app_reference(
+        &self,
+        reference: &Reference,
+        module: Option<&str>,
+    ) -> Result<(), RepositoryError> {
+        let items = self.reference_layer_items(reference, module);
+        if items.is_empty() {
+            return Err(RepositoryError::LayerNotFound(
+                reference.to_string(),
+                module.unwrap_or("*").to_string(),
+            ));
+        }
+        let entries = self.root.join("entries");
+        fs::create_dir_all(&entries)?;
+        let configured_paths = configured_export_paths()?;
+        for item in items.into_iter().filter(|item| item.info.kind == "app") {
+            self.export_app_entries_to(&entries, &item, &configured_paths)?;
+        }
+        update_shared_info(&entries);
+        Ok(())
+    }
+
+    pub fn unexport_app_reference(
+        &self,
+        reference: &Reference,
+        module: Option<&str>,
+    ) -> Result<(), RepositoryError> {
+        let items = self.reference_layer_items(reference, module);
+        if items.is_empty() {
+            return Err(RepositoryError::LayerNotFound(
+                reference.to_string(),
+                module.unwrap_or("*").to_string(),
+            ));
+        }
+        let entries = self.root.join("entries");
+        if !entries.is_dir() {
+            return Ok(());
+        }
+        let layers = items
+            .into_iter()
+            .filter(|item| item.info.kind == "app")
+            .map(|item| self.layer_path_for_item(&item))
+            .collect::<Result<Vec<_>, _>>()?;
+        remove_links_into_layers(&entries, &layers, &entries.join(ELF_VERIFY_PATH))?;
+        update_shared_info(&entries);
+        remove_empty_directories(&entries)?;
+        Ok(())
+    }
+
+    pub fn export_layer_sign_data(
+        &self,
+        reference: &Reference,
+        module: &str,
+    ) -> Result<(), RepositoryError> {
+        let item = self.layer_item(reference, module)?;
+        self.export_layer_sign_data_item(&item)
+    }
+
+    pub fn export_layer_sign_data_item(
+        &self,
+        item: &RepositoryCacheLayersItem,
+    ) -> Result<(), RepositoryError> {
+        let configured_paths = configured_export_paths()?;
+        if !configured_paths
+            .iter()
+            .any(|path| path == Path::new(ELF_VERIFY_PATH))
+        {
+            return Ok(());
+        }
+        let entries = self.root.join("entries");
+        fs::create_dir_all(&entries)?;
+        self.export_layer_sign_data_to(&entries, item)
+    }
+
+    pub fn unexport_layer_sign_data(
+        &self,
+        item: &RepositoryCacheLayersItem,
+    ) -> Result<(), RepositoryError> {
+        let sign_data = self
+            .root
+            .join("entries")
+            .join(ELF_VERIFY_PATH)
+            .join(&item.commit);
+        clear_path(&sign_data)?;
+        let sign_root = self.root.join("entries").join(ELF_VERIFY_PATH);
+        if sign_root.is_dir() && fs::read_dir(&sign_root)?.next().is_none() {
+            fs::remove_dir(sign_root)?;
+        }
+        Ok(())
+    }
+
+    fn reference_layer_items(
+        &self,
+        reference: &Reference,
+        module: Option<&str>,
+    ) -> Vec<RepositoryCacheLayersItem> {
+        self.cache
+            .existing_layers()
+            .into_iter()
+            .filter(|item| {
+                item.info.id == reference.id
+                    && item.info.channel == reference.channel
+                    && item.info.version == reference.version.to_string()
+                    && item.info.arch.first() == Some(&reference.architecture.to_string())
+                    && module.is_none_or(|module| item.info.module == module)
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn export_app_entries_to(
+        &self,
+        entries: &Path,
+        item: &RepositoryCacheLayersItem,
+        configured_paths: &[PathBuf],
+    ) -> Result<(), RepositoryError> {
+        let live_entries = self.root.join("entries");
+        let source_root = self.layer_path_for_item(item)?.join("entries");
         if !source_root.is_dir() {
             return Ok(());
         }
-        let destination_root = self.root.join("entries");
-        fs::create_dir_all(&destination_root)?;
-        for relative in export_paths(&source_root) {
+        for relative in app_export_paths(&source_root, configured_paths) {
             let source = source_root.join(&relative);
             if !source.exists() {
                 continue;
             }
             let destination = if relative == Path::new("share/systemd/user") {
-                destination_root.join("lib/systemd/user")
-            } else if relative == Path::new("share/deepin-elf-verify") {
-                destination_root.join(&relative).join(&item.commit)
+                entries.join("lib/systemd/user")
             } else {
-                destination_root.join(&relative)
+                entries.join(&relative)
             };
-            export_tree(&source, &destination, 10, &item.info.id, &destination_root)?;
+            export_tree(
+                &source,
+                &destination,
+                10,
+                &item.info.id,
+                entries,
+                &live_entries,
+            )?;
         }
-        update_shared_info(&destination_root);
         Ok(())
     }
 
-    pub fn unexport_reference(&self, reference: &Reference) -> Result<(), RepositoryError> {
-        let layer = self.layer_path(reference, "binary")?;
-        let entries = self.root.join("entries");
-        if !entries.is_dir() {
+    fn export_layer_sign_data_to(
+        &self,
+        entries: &Path,
+        item: &RepositoryCacheLayersItem,
+    ) -> Result<(), RepositoryError> {
+        let source = self
+            .layer_path_for_item(item)?
+            .join("entries")
+            .join(ELF_VERIFY_PATH);
+        if !source.exists() {
             return Ok(());
         }
-        remove_links_into(&entries, &layer)?;
+        let destination = entries.join(ELF_VERIFY_PATH).join(&item.commit);
+        export_tree(&source, &destination, 10, &item.info.id, entries, entries)?;
+        Ok(())
+    }
+
+    fn ensure_entries_current(&self) -> Result<(), RepositoryError> {
+        let entries = self.root.join("entries");
+        if fs::read_to_string(entries.join(".version"))
+            .is_ok_and(|version| version == EXPORT_VERSION)
+        {
+            return Ok(());
+        }
+
+        let temporary = self.root.join(format!("entries_new_{}", unique_suffix()));
+        clear_path(&temporary)?;
+        fs::create_dir_all(&temporary)?;
+        let configured_paths = configured_export_paths()?;
+        let export_sign_data = configured_paths
+            .iter()
+            .any(|path| path == Path::new(ELF_VERIFY_PATH));
+        for item in self.list_layer_items() {
+            if export_sign_data {
+                self.export_layer_sign_data_to(&temporary, &item)?;
+            }
+            if item.info.kind == "app" {
+                self.export_app_entries_to(&temporary, &item, &configured_paths)?;
+            }
+        }
+        write_file_with_mode(temporary.join(".version"), EXPORT_VERSION, SHARED_FILE_MODE)?;
+
+        if entries.exists() {
+            let old = self.root.join(format!("entries_old_{}", unique_suffix()));
+            fs::rename(&entries, &old)?;
+            if let Err(error) = fs::rename(&temporary, &entries) {
+                let _ = fs::rename(&old, &entries);
+                return Err(error.into());
+            }
+            clear_path(&old)?;
+        } else {
+            fs::rename(&temporary, &entries)?;
+        }
         update_shared_info(&entries);
-        remove_empty_directories(&entries)?;
         Ok(())
     }
 
@@ -1249,10 +1403,9 @@ impl LocalRepository {
         &self,
         reference: &Reference,
         module: &str,
-        sub_ref: Option<&str>,
         expected_commit: &str,
     ) -> Result<bool, RepositoryError> {
-        let ref_name = ostree_ref(reference, module, sub_ref)?;
+        let ref_name = ostree_ref(reference, module)?;
         let refspec = format!("{LOCAL_REMOTE}:{ref_name}");
         let Some(actual) = self.repo.resolve_rev(&refspec, true).await? else {
             return Ok(false);
@@ -1307,26 +1460,14 @@ fn is_loose_object_name(name: &str) -> bool {
         && ObjectType::from_extension(extension).is_some()
 }
 
-pub fn ostree_ref(
-    reference: &Reference,
-    module: &str,
-    sub_ref: Option<&str>,
-) -> Result<String, RepositoryError> {
+pub fn ostree_ref(reference: &Reference, module: &str) -> Result<String, RepositoryError> {
     if module.is_empty() || module.contains('/') || module.contains(':') {
         return Err(RepositoryError::InvalidModule);
     }
-    let mut value = format!(
+    Ok(format!(
         "{}/{}/{}/{}/{}",
         reference.channel, reference.id, reference.version, reference.architecture, module
-    );
-    if let Some(sub_ref) = sub_ref {
-        if sub_ref.is_empty() || sub_ref.contains('/') || sub_ref.contains(':') {
-            return Err(RepositoryError::InvalidModule);
-        }
-        value.push('_');
-        value.push_str(sub_ref);
-    }
-    Ok(value)
+    ))
 }
 
 pub fn reference_from_info(info: &PackageInfoV2) -> Result<Reference, RepositoryError> {
@@ -1343,27 +1484,43 @@ pub fn reference_from_info(info: &PackageInfoV2) -> Result<Reference, Repository
     )?)
 }
 
-fn export_paths(source_root: &Path) -> Vec<PathBuf> {
-    let mut paths = [
-        "share/applications",
-        "share/mime",
-        "share/icons",
-        "share/dbus-1",
-        "share/gnome-shell",
-        "share/appdata",
-        "share/metainfo",
-        "share/plugins",
-        "share/templates",
-        "share/deepin-elf-verify",
-    ]
-    .into_iter()
-    .map(PathBuf::from)
-    .collect::<Vec<_>>();
+fn configured_export_paths() -> Result<Vec<PathBuf>, RepositoryError> {
+    let installed = Path::new("/usr/share/linglong/export-dirs.json");
+    let content = if installed.is_file() {
+        fs::read_to_string(installed)?
+    } else {
+        DEFAULT_EXPORT_DIRS.to_string()
+    };
+    let configured: ExportDirs = serde_json::from_str(&content)?;
+    Ok(configured
+        .export_paths
+        .into_iter()
+        .map(PathBuf::from)
+        .filter(|path| {
+            !path.is_absolute()
+                && !path.components().any(|component| {
+                    matches!(
+                        component,
+                        std::path::Component::ParentDir | std::path::Component::RootDir
+                    )
+                })
+        })
+        .collect())
+}
+
+fn app_export_paths(source_root: &Path, configured_paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut paths = configured_paths
+        .iter()
+        .filter(|path| path.as_path() != Path::new(ELF_VERIFY_PATH))
+        .cloned()
+        .collect::<Vec<_>>();
     if source_root.join("lib/systemd/user").is_dir() {
         paths.push(PathBuf::from("lib/systemd/user"));
     } else {
         paths.push(PathBuf::from("share/systemd/user"));
     }
+    paths.sort();
+    paths.dedup();
     paths
 }
 
@@ -1373,6 +1530,7 @@ fn export_tree(
     depth: usize,
     app_id: &str,
     entries_root: &Path,
+    live_entries_root: &Path,
 ) -> Result<(), std::io::Error> {
     if depth == 0 {
         return Ok(());
@@ -1386,7 +1544,7 @@ fn export_tree(
             return Ok(());
         }
         rewrite_export_file(source, destination, app_id)?;
-        let destinations = desktop_destinations(destination, entries_root);
+        let destinations = desktop_destinations(destination, entries_root, live_entries_root);
         for destination in destinations {
             let Some(parent) = destination.parent() else {
                 continue;
@@ -1416,12 +1574,29 @@ fn export_tree(
             depth - 1,
             app_id,
             entries_root,
+            live_entries_root,
         )?;
     }
     Ok(())
 }
 
-fn desktop_destinations(destination: &Path, entries_root: &Path) -> Vec<PathBuf> {
+fn desktop_destinations(
+    destination: &Path,
+    entries_root: &Path,
+    live_entries_root: &Path,
+) -> Vec<PathBuf> {
+    let overlay_share = std::env::var_os("LINGLONG_EXPORT_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("share"));
+    desktop_destinations_with_overlay(destination, entries_root, live_entries_root, &overlay_share)
+}
+
+fn desktop_destinations_with_overlay(
+    destination: &Path,
+    entries_root: &Path,
+    live_entries_root: &Path,
+    overlay_share: &Path,
+) -> Vec<PathBuf> {
     if destination.extension() != Some(std::ffi::OsStr::new("desktop")) {
         return vec![destination.to_path_buf()];
     }
@@ -1429,9 +1604,6 @@ fn desktop_destinations(destination: &Path, entries_root: &Path) -> Vec<PathBuf>
     if !destination.starts_with(&default) {
         return vec![destination.to_path_buf()];
     }
-    let overlay_share = std::env::var_os("LINGLONG_EXPORT_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("share"));
     let overlay = entries_root.join(overlay_share).join("applications");
     if overlay == default {
         return vec![destination.to_path_buf()];
@@ -1440,10 +1612,18 @@ fn desktop_destinations(destination: &Path, entries_root: &Path) -> Vec<PathBuf>
         .strip_prefix(&default)
         .unwrap_or_else(|_| Path::new(""));
     let overlay_destination = overlay.join(relative);
-    let existing = [destination.to_path_buf(), overlay_destination.clone()]
-        .into_iter()
-        .filter(|path| fs::symlink_metadata(path).is_ok())
-        .collect::<Vec<_>>();
+    let live_default = live_entries_root.join("share/applications").join(relative);
+    let live_overlay = live_entries_root
+        .join(overlay_share)
+        .join("applications")
+        .join(relative);
+    let mut existing = Vec::new();
+    if fs::symlink_metadata(live_default).is_ok() {
+        existing.push(destination.to_path_buf());
+    }
+    if fs::symlink_metadata(live_overlay).is_ok() {
+        existing.push(overlay_destination.clone());
+    }
     if existing.is_empty() {
         vec![overlay_destination]
     } else {
@@ -1735,18 +1915,25 @@ fn update_shared_info(entries_root: &Path) {
     }
 }
 
-fn remove_links_into(directory: &Path, layer: &Path) -> Result<(), std::io::Error> {
+fn remove_links_into_layers(
+    directory: &Path,
+    layers: &[PathBuf],
+    excluded: &Path,
+) -> Result<(), std::io::Error> {
+    if directory == excluded {
+        return Ok(());
+    }
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
         let metadata = fs::symlink_metadata(entry.path())?;
         if metadata.file_type().is_symlink() {
             let target = fs::read_link(entry.path())?;
             let absolute = normalize_path(&entry.path().parent().unwrap_or(directory).join(target));
-            if absolute.starts_with(layer) {
+            if layers.iter().any(|layer| absolute.starts_with(layer)) {
                 fs::remove_file(entry.path())?;
             }
         } else if metadata.is_dir() {
-            remove_links_into(&entry.path(), layer)?;
+            remove_links_into_layers(&entry.path(), layers, excluded)?;
         }
     }
     Ok(())
@@ -2141,6 +2328,7 @@ mod tests {
                 mirror_enabled: None,
                 name: "stable".to_string(),
                 priority: 0,
+                region: None,
                 url: "https://example.invalid/repo".to_string(),
             }],
             version: 2,
@@ -2180,12 +2368,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            ostree_ref(&reference, "binary", None).unwrap(),
+            ostree_ref(&reference, "binary").unwrap(),
             "main/org.example.demo/1.2.3.4/x86_64/binary"
-        );
-        assert_eq!(
-            ostree_ref(&reference, "develop", Some("debug")).unwrap(),
-            "main/org.example.demo/1.2.3.4/x86_64/develop_debug"
         );
     }
 
@@ -2235,12 +2419,9 @@ mod tests {
         )
         .unwrap();
         let mut repository = LocalRepository::create(&root, config()).await.unwrap();
-        repository
-            .import_layer_dir(&source, &[], None)
-            .await
-            .unwrap();
+        repository.import_layer_dir(&source, &[]).await.unwrap();
         let reference = reference_from_info(&info()).unwrap();
-        repository.export_reference(&reference).unwrap();
+        repository.export_app_reference(&reference, None).unwrap();
 
         let exported = root.join("entries/share/applications/org.example.demo.desktop");
         assert!(
@@ -2260,8 +2441,125 @@ mod tests {
             .join("entries/share/applications/org.example.demo.desktop");
         assert!(PathBuf::from(format!("{}.linyaps.original", layer_desktop.display())).is_file());
 
-        repository.unexport_reference(&reference).unwrap();
+        repository.unexport_app_reference(&reference, None).unwrap();
         assert!(fs::symlink_metadata(exported).is_err());
+    }
+
+    #[test]
+    fn desktop_rebuild_preserves_live_export_locations() {
+        let temporary = tempdir().unwrap();
+        let live = temporary.path().join("entries");
+        let staging = temporary.path().join("entries-new");
+        let relative = Path::new("nested/org.example.demo.desktop");
+        let live_default = live.join("share/applications").join(relative);
+        let live_overlay = live.join("apps/share/applications").join(relative);
+        fs::create_dir_all(live_default.parent().unwrap()).unwrap();
+        fs::create_dir_all(live_overlay.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink("missing-default", &live_default).unwrap();
+        std::os::unix::fs::symlink("missing-overlay", &live_overlay).unwrap();
+
+        let destination = staging.join("share/applications").join(relative);
+        assert_eq!(
+            desktop_destinations_with_overlay(
+                &destination,
+                &staging,
+                &live,
+                Path::new("apps/share"),
+            ),
+            vec![
+                destination,
+                staging.join("apps/share/applications").join(relative),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn module_unexport_preserves_other_entries_and_sign_data() {
+        let temporary = tempdir().unwrap();
+        let root = temporary.path().join("repo-root");
+        let binary = temporary.path().join("binary");
+        let develop = temporary.path().join("develop");
+        fs::create_dir_all(&root).unwrap();
+
+        let binary_info = info();
+        let mut develop_info = binary_info.clone();
+        develop_info.module = "develop".to_string();
+        for (directory, layer_info, desktop) in [
+            (&binary, &binary_info, "binary.desktop"),
+            (&develop, &develop_info, "develop.desktop"),
+        ] {
+            fs::create_dir_all(directory.join("entries/share/applications")).unwrap();
+            fs::create_dir_all(directory.join("entries/share/deepin-elf-verify/.elfsign")).unwrap();
+            fs::write(
+                directory.join("info.json"),
+                serde_json::to_vec(layer_info).unwrap(),
+            )
+            .unwrap();
+            fs::write(
+                directory.join("entries/share/applications").join(desktop),
+                "[Desktop Entry]\nType=Application\nName=Demo\nExec=demo\n",
+            )
+            .unwrap();
+            fs::write(
+                directory.join("entries/share/deepin-elf-verify/.elfsign/signature"),
+                &layer_info.module,
+            )
+            .unwrap();
+        }
+
+        let mut repository = LocalRepository::create(&root, config()).await.unwrap();
+        repository.import_layer_dir(&binary, &[]).await.unwrap();
+        repository.import_layer_dir(&develop, &[]).await.unwrap();
+        let reference = reference_from_info(&binary_info).unwrap();
+        let binary_item = repository.layer_item(&reference, "binary").unwrap();
+        let develop_item = repository.layer_item(&reference, "develop").unwrap();
+        let entries = root.join("entries");
+        repository
+            .export_layer_sign_data_to(&entries, &binary_item)
+            .unwrap();
+        repository
+            .export_layer_sign_data_to(&entries, &develop_item)
+            .unwrap();
+        repository.export_app_reference(&reference, None).unwrap();
+
+        repository
+            .unexport_app_reference(&reference, Some("develop"))
+            .unwrap();
+        assert!(entries.join("share/applications/binary.desktop").exists());
+        assert!(!entries.join("share/applications/develop.desktop").exists());
+        assert!(
+            entries
+                .join(ELF_VERIFY_PATH)
+                .join(&binary_item.commit)
+                .join(".elfsign/signature")
+                .exists()
+        );
+        assert!(
+            entries
+                .join(ELF_VERIFY_PATH)
+                .join(&develop_item.commit)
+                .join(".elfsign/signature")
+                .exists()
+        );
+
+        assert!(
+            repository
+                .remove_layer(&reference, "develop")
+                .await
+                .unwrap()
+        );
+        assert!(
+            entries
+                .join(ELF_VERIFY_PATH)
+                .join(&binary_item.commit)
+                .exists()
+        );
+        assert!(
+            !entries
+                .join(ELF_VERIFY_PATH)
+                .join(&develop_item.commit)
+                .exists()
+        );
     }
 
     #[tokio::test]
@@ -2285,7 +2583,7 @@ mod tests {
 
         let mut repository = LocalRepository::create(&root, config()).await.unwrap();
         let imported = repository
-            .import_layer_dir(&source, std::slice::from_ref(&overlay), None)
+            .import_layer_dir(&source, std::slice::from_ref(&overlay))
             .await
             .unwrap();
 
@@ -2481,6 +2779,7 @@ mod tests {
             mirror_enabled: None,
             name: "stable".to_string(),
             priority: 0,
+            region: None,
             url: server.url(),
         };
         let reference = reference_from_info(&info()).unwrap();
@@ -2586,15 +2885,9 @@ mod tests {
         fs::write(source.join("payload"), "old").unwrap();
 
         let mut repository = LocalRepository::create(&root, config()).await.unwrap();
-        let old = repository
-            .import_layer_dir(&source, &[], None)
-            .await
-            .unwrap();
+        let old = repository.import_layer_dir(&source, &[]).await.unwrap();
         fs::write(source.join("payload"), "new").unwrap();
-        let current = repository
-            .import_layer_dir(&source, &[], None)
-            .await
-            .unwrap();
+        let current = repository.import_layer_dir(&source, &[]).await.unwrap();
         assert_ne!(old.commit, current.commit);
 
         let object_path = |commit: &str| {
@@ -2630,10 +2923,7 @@ mod tests {
         fs::write(source.join("payload"), "old").unwrap();
 
         let mut repository = LocalRepository::create(&root, config()).await.unwrap();
-        let old = repository
-            .import_layer_dir(&source, &[], None)
-            .await
-            .unwrap();
+        let old = repository.import_layer_dir(&source, &[]).await.unwrap();
         let reference = reference_from_info(&old.info).unwrap();
         assert!(repository.mark_layer_deleted(&reference, "binary").unwrap());
         assert!(repository.list_layer_items().is_empty());
@@ -2660,10 +2950,7 @@ mod tests {
         assert!(repository.mark_layer_deleted(&reference, "binary").unwrap());
 
         fs::write(source.join("payload"), "new").unwrap();
-        let current = repository
-            .import_layer_dir(&source, &[], None)
-            .await
-            .unwrap();
+        let current = repository.import_layer_dir(&source, &[]).await.unwrap();
         assert_ne!(old.commit, current.commit);
         assert_eq!(repository.list_layer_items().len(), 1);
         assert_eq!(repository.list_deleted_layer_items().len(), 1);
@@ -2684,46 +2971,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn clean_unreferenced_removes_uab_subrefs() {
-        let temporary = tempdir().unwrap();
-        let root = temporary.path().join("repo-root");
-        let source = temporary.path().join("source");
-        fs::create_dir_all(&root).unwrap();
-        fs::create_dir_all(&source).unwrap();
-        let mut runtime = info();
-        runtime.id = "org.example.runtime".to_string();
-        runtime.kind = "runtime".to_string();
-        runtime.module = "binary".to_string();
-        fs::write(
-            source.join("info.json"),
-            serde_json::to_vec(&runtime).unwrap(),
-        )
-        .unwrap();
-        fs::write(source.join("payload"), "runtime").unwrap();
-
-        let mut repository = LocalRepository::create(&root, config()).await.unwrap();
-        let imported = repository
-            .import_layer_dir(&source, &[], Some("bundle-uuid"))
-            .await
-            .unwrap();
-        let reference = reference_from_info(&runtime).unwrap();
-        let ref_name = ostree_ref(&reference, "binary", Some("bundle-uuid")).unwrap();
-        let ref_path = root.join("repo/refs/remotes/local").join(ref_name);
-        let object_path = root
-            .join("repo/objects")
-            .join(&imported.commit[..2])
-            .join(format!("{}.commit", &imported.commit[2..]));
-        assert!(ref_path.is_file());
-        assert!(repository.remove_layer(&reference, "binary").await.unwrap());
-        assert!(ref_path.is_file());
-
-        repository.clean_unreferenced().await.unwrap();
-
-        assert!(!ref_path.exists());
-        assert!(!object_path.exists());
-    }
-
-    #[tokio::test]
     async fn resolves_latest_version_and_runtime_module_compatibility() {
         let temporary = tempdir().unwrap();
         let root = temporary.path().join("repo-root");
@@ -2741,14 +2988,8 @@ mod tests {
         fs::write(second.join("info.json"), serde_json::to_vec(&new).unwrap()).unwrap();
 
         let mut repository = LocalRepository::create(&root, config()).await.unwrap();
-        repository
-            .import_layer_dir(&first, &[], None)
-            .await
-            .unwrap();
-        let latest = repository
-            .import_layer_dir(&second, &[], None)
-            .await
-            .unwrap();
+        repository.import_layer_dir(&first, &[]).await.unwrap();
+        let latest = repository.import_layer_dir(&second, &[]).await.unwrap();
 
         let fuzzy = "org.example.demo".parse::<FuzzyReference>().unwrap();
         let resolved = repository.resolve_local(&fuzzy, false).unwrap();
@@ -2784,10 +3025,7 @@ mod tests {
         )
         .unwrap();
         let mut repository = LocalRepository::create(&root, config()).await.unwrap();
-        repository
-            .import_layer_dir(&source, &[], None)
-            .await
-            .unwrap();
+        repository.import_layer_dir(&source, &[]).await.unwrap();
         drop(repository);
         fs::remove_file(root.join("states.json")).unwrap();
         assert!(LocalRepository::open(&root).await.is_err());
@@ -2809,6 +3047,7 @@ mod tests {
                 mirror_enabled: Some(true),
                 name: "testing".to_string(),
                 priority: 100,
+                region: None,
                 url: "https://testing.example".to_string(),
             }],
             version: 2,
@@ -2823,5 +3062,44 @@ mod tests {
                 .config,
             updated
         );
+    }
+
+    #[tokio::test]
+    async fn update_config_preserves_deleted_layers() {
+        let temporary = tempdir().unwrap();
+        let root = temporary.path().join("repo-root");
+        let source = temporary.path().join("source");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("info.json"),
+            serde_json::to_vec(&info()).unwrap(),
+        )
+        .unwrap();
+        let mut repository = LocalRepository::create(&root, config()).await.unwrap();
+        repository.import_layer_dir(&source, &[]).await.unwrap();
+        let reference = reference_from_info(&info()).unwrap();
+        assert!(repository.mark_layer_deleted(&reference, "binary").unwrap());
+        let layers = repository.cache().data().layers.clone();
+
+        let mut updated = config();
+        updated.repos[0].url = "https://updated.example/repo".to_string();
+        repository.update_config(updated.clone()).unwrap();
+        drop(repository);
+
+        let cache = RepositoryCacheStore::load(root.join("states.json")).unwrap();
+        assert_eq!(cache.data().config, updated);
+        assert_eq!(cache.data().layers, layers);
+        assert_eq!(cache.deleted_layers().len(), 1);
+    }
+
+    #[test]
+    fn reference_rejects_missing_architecture() {
+        let mut package = info();
+        package.arch.clear();
+        assert!(matches!(
+            reference_from_info(&package),
+            Err(RepositoryError::MissingArchitecture)
+        ));
     }
 }
