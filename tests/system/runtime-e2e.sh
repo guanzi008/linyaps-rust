@@ -39,7 +39,15 @@ done
 case $(uname -m) in
     x86_64 | amd64) architecture=x86_64 ;;
     aarch64 | arm64) architecture=arm64 ;;
-    loongarch64) architecture=loong64 ;;
+    loongarch64 | loong64)
+        elf_flags=$(od -An -tx4 -j 48 -N 4 -- "$ll_cli" | tr -d '[:space:]')
+        if (( (16#$elf_flags & 0x40) != 0 )); then
+            architecture=loong64
+        else
+            architecture=loongarch64
+        fi
+        ;;
+    sw_64 | sw64) architecture=sw64 ;;
     riscv64) architecture=riscv64 ;;
     mips64 | mips64el) architecture=mips64 ;;
     *)

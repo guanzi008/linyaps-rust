@@ -382,8 +382,30 @@ impl PackageManagerAsyncClient {
                 Interaction(Option<Result<(String, i32, VariantMap), String>>),
                 Task(Option<Result<(String, VariantMap), String>>),
             }
-            let event = futures_lite::future::race(
-                futures_lite::future::race(
+            let event = futures_lite::future::or(
+                async {
+                    Event::Interaction(interactions.next().await.map(|signal| {
+                        signal
+                            .args()
+                            .map(|args| {
+                                (
+                                    args.interaction_id().to_string(),
+                                    *args.message_id(),
+                                    args.additional_message().clone(),
+                                )
+                            })
+                            .map_err(|error| error.to_string())
+                    }))
+                },
+                futures_lite::future::or(
+                    async {
+                        Event::Task(task_events.next().await.map(|signal| {
+                            signal
+                                .args()
+                                .map(|args| (args.event().to_string(), args.data().clone()))
+                                .map_err(|error| error.to_string())
+                        }))
+                    },
                     async {
                         Event::Finished(finished.next().await.map(|signal| {
                             signal
@@ -392,33 +414,21 @@ impl PackageManagerAsyncClient {
                                 .map_err(|error| error.to_string())
                         }))
                     },
-                    async {
-                        Event::Interaction(interactions.next().await.map(|signal| {
-                            signal
-                                .args()
-                                .map(|args| {
-                                    (
-                                        args.interaction_id().to_string(),
-                                        *args.message_id(),
-                                        args.additional_message().clone(),
-                                    )
-                                })
-                                .map_err(|error| error.to_string())
-                        }))
-                    },
                 ),
-                async {
-                    Event::Task(task_events.next().await.map(|signal| {
-                        signal
-                            .args()
-                            .map(|args| (args.event().to_string(), args.data().clone()))
-                            .map_err(|error| error.to_string())
-                    }))
-                },
             )
             .await;
             match event {
                 Event::Finished(Some(Ok(result))) => {
+                    while let Some(Some(signal)) =
+                        futures_lite::future::poll_once(task_events.next()).await
+                    {
+                        let args = signal
+                            .args()
+                            .map_err(|error| PackageManagerError::Protocol(error.to_string()))?;
+                        if let Some(observer) = &self.task_observer {
+                            (observer.event)(args.event(), args.data());
+                        }
+                    }
                     let common = parse_common_result_unchecked(&result);
                     if common.code != 0 {
                         return Err(PackageManagerError::Task {

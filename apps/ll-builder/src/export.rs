@@ -415,14 +415,19 @@ mod tests {
         )
         .await
         .unwrap();
+        let architecture = Architecture::current().unwrap();
         let base = temporary.path().join("base");
         let app = temporary.path().join("app");
-        fs::create_dir_all(base.join("files/lib/x86_64-linux-gnu")).unwrap();
+        let base_library = base
+            .join("files/lib")
+            .join(architecture.triplet())
+            .join("libdemo.so");
+        fs::create_dir_all(base_library.parent().unwrap()).unwrap();
         fs::create_dir_all(app.join("files/bin")).unwrap();
-        fs::write(base.join("files/lib/x86_64-linux-gnu/libdemo.so"), "base").unwrap();
+        fs::write(base_library, "base").unwrap();
         fs::write(app.join("files/bin/demo"), "app").unwrap();
         let base_info = PackageInfoV2 {
-            arch: vec!["x86_64".to_string()],
+            arch: vec![architecture.to_string()],
             base: String::new(),
             channel: "main".to_string(),
             command: None,
@@ -442,7 +447,7 @@ mod tests {
             version: "23.1.0.0".to_string(),
         };
         let app_info = PackageInfoV2 {
-            arch: vec!["x86_64".to_string()],
+            arch: vec![architecture.to_string()],
             base: "org.deepin.base/23.1.0".to_string(),
             channel: "main".to_string(),
             command: Some(vec!["/opt/apps/org.example.App/files/bin/demo".to_string()]),
