@@ -64,12 +64,14 @@ pub(super) async fn run(options: Run, no_dbus: bool, json: bool) -> Result<(), C
         .join(&target_item.commit)
         .join(&container_id);
     let process_args = process_arguments(&options, &app_info)?;
-    let package_manager = task_package_manager_client(no_dbus, json, false).await?;
-    package_manager
-        .init_run_context(&run_context_json, &container_id)
-        .await
-        .map_err(format_package_manager_error)?;
-    drop(package_manager);
+    let cache_initialized = !no_dbus && run_context_cache_matches(&app_cache, &run_context_json);
+    if !cache_initialized {
+        let package_manager = task_package_manager_client(no_dbus, json, false).await?;
+        package_manager
+            .init_run_context(&run_context_json, &container_id)
+            .await
+            .map_err(format_package_manager_error)?;
+    }
     if options.run_context.is_none() && !crate::namespace::has_effective_sys_admin()? {
         let startup_lock = match acquire_startup_lock_or_reuse(&container_id, &process_args)? {
             StartupLock::New(lock) => lock,
@@ -172,6 +174,10 @@ pub(super) async fn run(options: Run, no_dbus: bool, json: bool) -> Result<(), C
     let status = status?;
     drop(startup_lock);
     exit_status_result(status, "application")
+}
+
+fn run_context_cache_matches(cache: &Path, config: &str) -> bool {
+    fs::read(cache.join(".config")).is_ok_and(|saved| saved == config.as_bytes())
 }
 
 fn exit_status_result(status: ExitStatus, subject: &str) -> Result<(), CliCommandError> {
@@ -678,7 +684,7 @@ fn acquire_startup_lock_or_reuse(
         if let Some(status) = reuse_running_container(container_id, arguments)? {
             return Ok(StartupLock::Reused(status));
         }
-        thread::sleep(Duration::from_secs(3));
+        thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -2705,6 +2711,16 @@ fn make_directories_removable(path: &Path) -> Result<(), std::io::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_context_cache_requires_matching_initialized_config() {
+        let temporary = tempfile::tempdir().unwrap();
+        assert!(!run_context_cache_matches(temporary.path(), "current"));
+        fs::write(temporary.path().join(".config"), "old").unwrap();
+        assert!(!run_context_cache_matches(temporary.path(), "current"));
+        fs::write(temporary.path().join(".config"), "current").unwrap();
+        assert!(run_context_cache_matches(temporary.path(), "current"));
+    }
 
     fn package_info(name: &str) -> PackageInfoV2 {
         PackageInfoV2 {
