@@ -23,7 +23,23 @@ pub fn data_dirs() -> String {
 
 pub fn print_environment() -> Result<()> {
     println!("XDG_DATA_DIRS={}", data_dirs());
+    let root = env::var_os("LINGLONG_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_ROOT));
+    let path = executable_path_with(env::var("PATH").ok().as_deref(), &root);
+    if !path.is_empty() {
+        println!("PATH={path}");
+    }
     Ok(())
+}
+
+fn executable_path_with(current: Option<&str>, root: &Path) -> String {
+    let mut value = current.unwrap_or_default().to_string();
+    let directory = root.join("entries/bin");
+    if directory.is_dir() {
+        append_unique(&mut value, &directory);
+    }
+    value
 }
 
 fn data_dirs_with(current: Option<&str>, root: &Path, export: &Path) -> String {
@@ -76,6 +92,27 @@ fn prepend_unique(value: &mut String, path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn executable_path_only_appends_existing_directory_once() {
+        let root = tempfile::tempdir().unwrap();
+        assert_eq!(
+            executable_path_with(Some("/usr/bin"), root.path()),
+            "/usr/bin"
+        );
+        assert_eq!(executable_path_with(None, root.path()), "");
+        std::fs::create_dir_all(root.path().join("entries/bin")).unwrap();
+        let expected = format!("/usr/bin:{}/entries/bin", root.path().display());
+        assert_eq!(
+            executable_path_with(Some("/usr/bin"), root.path()),
+            expected
+        );
+        assert_eq!(executable_path_with(Some(&expected), root.path()), expected);
+        assert_eq!(
+            executable_path_with(None, root.path()),
+            format!("{}/entries/bin", root.path().display())
+        );
+    }
 
     #[test]
     fn appends_default_and_prepends_custom_export() {

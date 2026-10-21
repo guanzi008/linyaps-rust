@@ -3,7 +3,7 @@
 ## 冻结目标
 
 - 上游仓库：[`OpenAtom-Linyaps/linyaps`](https://github.com/OpenAtom-Linyaps/linyaps)
-- 冻结提交：`ed888bbe8007a40bbd056d534b75b2039335df42`
+- 冻结提交：`fcd650e8f7cc289ecb66392673edf7cec44a7df3`
 - 对外版本：`1.15.0-dev`
 - 配套运行时提交：`OpenAtom-Linyaps/linyaps-box@ca5e503ea72553f65b3e4e4bfe86c707eeeb63ea`
 
@@ -25,6 +25,7 @@
 
 ## 冻结语义
 
+- 跟进 `32793c63` / `fcd650e8`：binary 模块生成 appid 命令包装器，支持参数转义、更新、模块/升级卸载保留和最终卸载清理；导出版本为 `1.0.0.5`，systemd 环境生成器在存在时将 `entries/bin` 去重追加到 PATH。
 - 支持架构名及 triplet：`x86_64`、`arm64`、`loongarch64`、`loong64`、`sw64`、`riscv64`、`mips64`。
 - `ll-init` 必须为静态 Linux ELF；安装前会检查 `PT_INTERP` 和动态依赖。
 - OCI 运行时仅接受冻结版本实际支持的 disabled cgroup manager。

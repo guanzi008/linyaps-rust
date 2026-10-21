@@ -27,7 +27,7 @@ use crate::{CacheError, RemoteError, RemoteRepositoryClient, RepositoryCacheStor
 
 const LOCAL_REMOTE: &str = "local";
 const ELF_VERIFY_PATH: &str = "share/deepin-elf-verify";
-const EXPORT_VERSION: &str = "1.0.0.4";
+const EXPORT_VERSION: &str = "1.0.0.5";
 const DEFAULT_EXPORT_DIRS: &str = include_str!("../../../misc/share/linglong/export-dirs.json");
 
 #[derive(Debug, Error)]
@@ -1155,13 +1155,22 @@ impl LocalRepository {
             return Ok(());
         }
         let layers = items
-            .into_iter()
+            .iter()
             .filter(|item| item.info.kind == "app")
-            .map(|item| self.layer_path_for_item(&item))
+            .map(|item| self.layer_path_for_item(item))
             .collect::<Result<Vec<_>, _>>()?;
         remove_links_into_layers(&entries, &layers, &entries.join(ELF_VERIFY_PATH))?;
+        for item in items.iter().filter(|item| item.info.kind == "app") {
+            let retained = self.cache.existing_layers().into_iter().any(|other| {
+                other.info.id == item.info.id
+                    && !items.iter().any(|removed| removed.commit == other.commit)
+            });
+            if !retained {
+                remove_app_wrapper(&entries, &item.info.id)?;
+            }
+        }
         update_shared_info(&entries);
-        remove_empty_directories(&entries)?;
+        remove_empty_export_directories(&entries, &entries)?;
         Ok(())
     }
 
@@ -1233,6 +1242,9 @@ impl LocalRepository {
         configured_paths: &[PathBuf],
     ) -> Result<(), RepositoryError> {
         let live_entries = self.root.join("entries");
+        if item.info.module == "binary" {
+            export_app_wrapper(entries, &item.info)?;
+        }
         let source_root = self.layer_path_for_item(item)?.join("entries");
         if !source_root.is_dir() {
             return Ok(());
@@ -1939,14 +1951,67 @@ fn remove_links_into_layers(
     Ok(())
 }
 
-fn remove_empty_directories(directory: &Path) -> Result<bool, std::io::Error> {
+fn remove_empty_export_directories(directory: &Path, root: &Path) -> Result<bool, std::io::Error> {
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
-        if entry.file_type()?.is_dir() && remove_empty_directories(&entry.path())? {
+        if entry.file_type()?.is_dir()
+            && remove_empty_export_directories(&entry.path(), root)?
+            && !(directory == root && matches!(entry.file_name().to_str(), Some("bin" | "share")))
+        {
             fs::remove_dir(entry.path())?;
         }
     }
     Ok(fs::read_dir(directory)?.next().is_none())
+}
+
+fn remove_app_wrapper(entries: &Path, app_id: &str) -> Result<(), std::io::Error> {
+    validate_wrapper_id(app_id)?;
+    clear_path(&entries.join("bin").join(app_id))?;
+    clear_path(&entries.join("bin/apps").join(app_id))
+}
+
+fn validate_wrapper_id(app_id: &str) -> Result<(), std::io::Error> {
+    if app_id.is_empty() || app_id == "." || app_id == ".." || app_id.contains('/') {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid wrapper app id",
+        ));
+    }
+    Ok(())
+}
+
+fn export_app_wrapper(entries: &Path, info: &PackageInfoV2) -> Result<(), std::io::Error> {
+    validate_wrapper_id(&info.id)?;
+    let Some(command) = info.command.as_ref().filter(|command| !command.is_empty()) else {
+        return remove_app_wrapper(entries, &info.id);
+    };
+    let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
+    let content = format!(
+        "#!/usr/bin/env sh\nexec ll-cli run {} -- {} \"$@\"\n",
+        quote(&info.id),
+        command
+            .iter()
+            .map(|argument| quote(argument))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let relative = Path::new("apps").join(&info.id).join("bin").join(&info.id);
+    let binary_root = entries.join("bin");
+    let wrapper = binary_root.join(&relative);
+    fs::create_dir_all(entries.join("share"))?;
+    fs::create_dir_all(wrapper.parent().unwrap())?;
+    if fs::read(&wrapper).ok().as_deref() != Some(content.as_bytes()) {
+        let temporary = wrapper.with_extension(format!("tmp.{}", unique_suffix()));
+        write_file_with_mode(&temporary, content, 0o755)?;
+        fs::rename(temporary, &wrapper)?;
+    }
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755))?;
+    let link = binary_root.join(&info.id);
+    if fs::read_link(&link).ok().as_ref() != Some(&relative) {
+        clear_path(&link)?;
+        symlink(relative, link)?;
+    }
+    Ok(())
 }
 
 fn overlay_tree(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
@@ -2399,6 +2464,87 @@ mod tests {
             service
                 .contains("ExecStop=/usr/bin/ll-cli run org.example.demo -- -/usr/bin/demo --quit")
         );
+    }
+
+    #[tokio::test]
+    async fn wrapper_lifecycle_without_entries_and_across_modules() {
+        let temporary = tempdir().unwrap();
+        let root = temporary.path().join("repository");
+        let source = temporary.path().join("source");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&source).unwrap();
+        let mut package = info();
+        package.command = Some(vec![
+            "/opt/demo app".into(),
+            "a'b".into(),
+            "$(false)".into(),
+            "".into(),
+        ]);
+        fs::write(
+            source.join("info.json"),
+            serde_json::to_vec(&package).unwrap(),
+        )
+        .unwrap();
+        let mut repository = LocalRepository::create(&root, config()).await.unwrap();
+        repository.import_layer_dir(&source, &[]).await.unwrap();
+        let reference = reference_from_info(&package).unwrap();
+        repository.export_app_reference(&reference, None).unwrap();
+        let wrapper = root.join("entries/bin").join(&package.id);
+        let original = fs::read_to_string(&wrapper).unwrap();
+        assert_eq!(
+            original,
+            "#!/usr/bin/env sh\nexec ll-cli run 'org.example.demo' -- '/opt/demo app' 'a'\\''b' '$(false)' '' \"$@\"\n"
+        );
+        assert_eq!(
+            fs::metadata(&wrapper).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        assert_eq!(
+            fs::read_link(&wrapper).unwrap(),
+            Path::new("apps/org.example.demo/bin/org.example.demo")
+        );
+        repository.export_app_reference(&reference, None).unwrap();
+        assert_eq!(fs::read_to_string(&wrapper).unwrap(), original);
+        package.module = "develop".into();
+        package.command = Some(vec!["wrong-command".into()]);
+        fs::write(
+            source.join("info.json"),
+            serde_json::to_vec(&package).unwrap(),
+        )
+        .unwrap();
+        repository.import_layer_dir(&source, &[]).await.unwrap();
+        repository
+            .export_app_reference(&reference, Some("develop"))
+            .unwrap();
+        repository
+            .unexport_app_reference(&reference, Some("develop"))
+            .unwrap();
+        assert_eq!(fs::read_to_string(&wrapper).unwrap(), original);
+        repository.unexport_app_reference(&reference, None).unwrap();
+        assert!(!wrapper.exists());
+        assert!(!root.join("entries/bin/apps/org.example.demo").exists());
+        assert!(root.join("entries/bin").is_dir());
+        assert!(root.join("entries/share").is_dir());
+    }
+
+    #[test]
+    fn wrapper_updates_and_removes_empty_commands() {
+        let entries = tempdir().unwrap();
+        let mut package = info();
+        export_app_wrapper(entries.path(), &package).unwrap();
+        package.command = Some(vec!["changed".into()]);
+        export_app_wrapper(entries.path(), &package).unwrap();
+        let wrapper = entries.path().join("bin").join(&package.id);
+        assert!(
+            fs::read_to_string(&wrapper)
+                .unwrap()
+                .contains("-- 'changed'")
+        );
+        package.command = Some(Vec::new());
+        export_app_wrapper(entries.path(), &package).unwrap();
+        assert!(fs::symlink_metadata(wrapper).is_err());
+        package.id = "../../outside".into();
+        assert!(export_app_wrapper(entries.path(), &package).is_err());
     }
 
     #[tokio::test]

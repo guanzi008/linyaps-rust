@@ -1,7 +1,7 @@
 # linyaps-rust
 
 `OpenAtom-Linyaps/linyaps` 的纯 Rust、命令兼容重构。兼容目标同步到上游提交
-[`ed888bbe8007a40bbd056d534b75b2039335df42`](https://github.com/OpenAtom-Linyaps/linyaps/commit/ed888bbe8007a40bbd056d534b75b2039335df42)，版本输出保持 `1.15.0-dev`。
+[`fcd650e8f7cc289ecb66392673edf7cec44a7df3`](https://github.com/OpenAtom-Linyaps/linyaps/commit/fcd650e8f7cc289ecb66392673edf7cec44a7df3)，版本输出保持 `1.15.0-dev`。
 
 仓库不包含 C、C++、Go、Python 或汇编实现源码，也不调用原项目二进制。构建器按协议执行用户构建命令和系统工具；`misc` 中的 shell 文件是桌面/系统集成资源，不是替代实现。
 
