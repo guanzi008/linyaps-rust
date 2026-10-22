@@ -116,8 +116,10 @@ RPM 安装会建立系统服务用户和运行目录，使用 Fedora 的 X11 xin
 zsh 补全路径；不会修改 SELinux 策略、关闭 SELinux 或安装 NVIDIA 驱动。
 Docker 安装检查不能替代启用 SELinux 的真实桌面、Wayland 或 GPU 测试。
 `packaging/fedora/smoke-test.sh` 只允许在一次性容器中执行，会测试安装、
-普通用户 D-Bus 访问、重装、卸载及应用数据保留。`rpmlint.toml` 只豁免
-运行时必需的静态 `ll-init` 和原样保留的上游历史许可证地址。
+普通用户 D-Bus 访问、重装、卸载及应用数据保留。重复的辅助程序使用
+保持调用入口名称的相对符号链接。`rpmlint.toml` 只豁免运行时必需的
+静态 `ll-init`、原样保留的上游历史许可证地址和兼容现有协议的
+`/run/linglong` sticky 目录权限。
 完整兼容范围与已知限制仍以 `COMPATIBILITY.md` 为准。
 
 许可证为 `LGPL-3.0-or-later`；随仓库保留了对应上游的完整 REUSE 许可证集合。

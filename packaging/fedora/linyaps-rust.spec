@@ -1,6 +1,5 @@
 %global debug_package %{nil}
 %global _build_id_links none
-%global __os_install_post_hardlink %{nil}
 
 Name:           linyaps-rust
 Version:        1.15.0
@@ -59,6 +58,19 @@ cargo rustc --release --locked --offline -p ll-init -- -C target-feature=+crt-st
 %install
 target_dir="${CARGO_TARGET_DIR:-target}/release"
 "$target_dir/ll-system-helper" install --destdir "%{buildroot}" --prefix /usr --binary-dir "$target_dir"
+for helper in \
+    "%{buildroot}%{_prefix}/lib/systemd/system-environment-generators/61-linglong" \
+    "%{buildroot}%{_prefix}/lib/systemd/user-generators/linglong-user-systemd-generator" \
+    "%{buildroot}%{_libexecdir}/linglong/font-cache-generator" \
+    "%{buildroot}%{_libexecdir}/linglong/ld-cache-generator" \
+    "%{buildroot}%{_libexecdir}/linglong/app-conf-generator"; do
+    ln -srf "%{buildroot}%{_libexecdir}/linglong/ll-system-helper" "$helper"
+done
+for helper in fetch-archive-source fetch-dsc-source fetch-file-source fetch-git-source \
+    builder/helper/config-check.sh builder/helper/ldd-check.sh \
+    builder/helper/main-check.sh builder/helper/symbols-strip.sh; do
+    ln -srf "%{buildroot}%{_bindir}/ll-builder" "%{buildroot}%{_libexecdir}/linglong/$helper"
+done
 install -d "%{buildroot}%{_sysconfdir}/X11/xinit/xinitrc.d"
 {
     printf '#!/bin/sh\n'
@@ -141,8 +153,8 @@ cargo test --release --locked --offline -p ll-system-helper
 %ghost %dir %attr(0755,deepin-linglong,deepin-linglong) /var/lib/linglong
 %ghost %dir %attr(1777,deepin-linglong,deepin-linglong) /run/linglong
 %ghost %attr(0644,deepin-linglong,deepin-linglong) /run/linglong/lock
-%ghost %dir %{_sysconfdir}/linglong
-%ghost %dir %{_sysconfdir}/linglong/config.d
+%ghost %dir %attr(0755,root,root) %{_sysconfdir}/linglong
+%ghost %dir %attr(0755,root,root) %{_sysconfdir}/linglong/config.d
 
 %files builder
 %{_bindir}/ll-builder

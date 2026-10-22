@@ -17,6 +17,15 @@ ll-box --version
 ll-cli --help >/dev/null
 ll-builder --help >/dev/null
 ll-box --help >/dev/null
+test "$(readlink -f /usr/libexec/linglong/fetch-file-source)" = /usr/bin/ll-builder
+test "$(readlink -f /usr/libexec/linglong/app-conf-generator)" = /usr/libexec/linglong/ll-system-helper
+mkdir -p /tmp/fedora-rpm-helper-probe
+/usr/libexec/linglong/app-conf-generator org.example.RpmProbe /tmp/fedora-rpm-helper-probe
+/usr/lib/systemd/system-environment-generators/61-linglong | grep -q 'XDG_DATA_DIRS='
+helper_result=0
+/usr/libexec/linglong/fetch-file-source >/tmp/fedora-rpm-fetch-usage.log 2>&1 || helper_result=$?
+test "$helper_result" != 0
+grep -q 'fetch-file-source OUTPUT URL SHA256 CACHE' /tmp/fedora-rpm-fetch-usage.log
 test -x /etc/X11/xinit/xinitrc.d/50-linglong.sh
 test -r /usr/share/zsh/site-functions/_ll-cli
 test ! -e /etc/X11/Xsession.d/21linglong
