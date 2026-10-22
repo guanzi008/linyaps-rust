@@ -1966,12 +1966,13 @@ fn remove_empty_export_directories(directory: &Path, root: &Path) -> Result<bool
 
 fn remove_app_wrapper(entries: &Path, app_id: &str) -> Result<(), std::io::Error> {
     validate_wrapper_id(app_id)?;
+    check_wrapper_directories(entries, app_id)?;
     clear_path(&entries.join("bin").join(app_id))?;
     clear_path(&entries.join("bin/apps").join(app_id))
 }
 
 fn validate_wrapper_id(app_id: &str) -> Result<(), std::io::Error> {
-    if app_id.is_empty() || app_id == "." || app_id == ".." || app_id.contains('/') {
+    if app_id.is_empty() || matches!(app_id, "." | ".." | "apps") || app_id.contains('/') {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "invalid wrapper app id",
@@ -1980,8 +1981,28 @@ fn validate_wrapper_id(app_id: &str) -> Result<(), std::io::Error> {
     Ok(())
 }
 
+fn check_wrapper_directories(entries: &Path, app_id: &str) -> Result<(), std::io::Error> {
+    let mut directory = entries.to_path_buf();
+    for component in ["bin", "apps", app_id, "bin"] {
+        directory.push(component);
+        match fs::symlink_metadata(&directory) {
+            Ok(metadata) if !metadata.is_dir() => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "wrapper parent is not a real directory",
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => return Err(error),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 fn export_app_wrapper(entries: &Path, info: &PackageInfoV2) -> Result<(), std::io::Error> {
     validate_wrapper_id(&info.id)?;
+    check_wrapper_directories(entries, &info.id)?;
     let Some(command) = info.command.as_ref().filter(|command| !command.is_empty()) else {
         return remove_app_wrapper(entries, &info.id);
     };
@@ -2000,7 +2021,9 @@ fn export_app_wrapper(entries: &Path, info: &PackageInfoV2) -> Result<(), std::i
     let wrapper = binary_root.join(&relative);
     fs::create_dir_all(entries.join("share"))?;
     fs::create_dir_all(wrapper.parent().unwrap())?;
-    if fs::read(&wrapper).ok().as_deref() != Some(content.as_bytes()) {
+    if fs::symlink_metadata(&wrapper).is_ok_and(|metadata| !metadata.is_file())
+        || fs::read(&wrapper).ok().as_deref() != Some(content.as_bytes())
+    {
         let temporary = wrapper.with_extension(format!("tmp.{}", unique_suffix()));
         write_file_with_mode(&temporary, content, 0o755)?;
         fs::rename(temporary, &wrapper)?;
@@ -2545,6 +2568,31 @@ mod tests {
         assert!(fs::symlink_metadata(wrapper).is_err());
         package.id = "../../outside".into();
         assert!(export_app_wrapper(entries.path(), &package).is_err());
+    }
+
+    #[test]
+    fn wrappers_do_not_write_through_symlinks() {
+        let entries = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let package = info();
+        let target = outside.path().join("target");
+        fs::write(&target, "keep").unwrap();
+        let actual = entries
+            .path()
+            .join("bin/apps")
+            .join(&package.id)
+            .join("bin")
+            .join(&package.id);
+        fs::create_dir_all(actual.parent().unwrap()).unwrap();
+        symlink(&target, &actual).unwrap();
+        export_app_wrapper(entries.path(), &package).unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "keep");
+        assert!(fs::symlink_metadata(actual).unwrap().is_file());
+        fs::remove_dir_all(entries.path().join("bin/apps")).unwrap();
+        symlink(outside.path(), entries.path().join("bin/apps")).unwrap();
+        assert!(export_app_wrapper(entries.path(), &package).is_err());
+        assert!(remove_app_wrapper(entries.path(), &package.id).is_err());
+        assert_eq!(fs::read_to_string(target).unwrap(), "keep");
     }
 
     #[tokio::test]
