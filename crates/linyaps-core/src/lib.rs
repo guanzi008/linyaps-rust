@@ -1,5 +1,6 @@
 pub mod architecture;
 pub mod cdi;
+pub mod host_nvidia;
 pub mod json_patch;
 pub mod oci_patch;
 pub mod reference;

@@ -7,6 +7,7 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 use linyaps_api::RunContextConfig;
+use linyaps_core::host_nvidia::HostNvidia;
 use linyaps_core::{Reference, cdi};
 use linyaps_repository::LocalRepository;
 use serde_json::{Value, json};
@@ -40,6 +41,7 @@ fn initialize_with_runtime(
         bail!("container id mismatch");
     }
     let resolved = resolve(repository, &config)?;
+    let host_nvidia = HostNvidia::from_config(&config, resolved.target.architecture)?;
     let target_item = repository.layer_item(&resolved.target, "binary")?;
     let cache = repository
         .root()
@@ -52,7 +54,10 @@ fn initialize_with_runtime(
     }
     fs::create_dir_all(&cache)
         .with_context(|| format!("failed to create container cache {}", cache.display()))?;
-    let ld_conf = make_ld_conf(&resolved)?;
+    let mut ld_conf = make_ld_conf(&resolved)?;
+    if let Some(host) = &host_nvidia {
+        ld_conf.insert_str(0, &host.ld_conf());
+    }
     fs::write(cache.join("ld.so.conf"), ld_conf)?;
     if !cache.join("ld.so.cache").exists() {
         fs::write(cache.join("ld.so.cache"), [])?;
@@ -70,7 +75,14 @@ fn initialize_with_runtime(
         )
     })?;
     prepare_mount_points(&rootfs, &resolved)?;
-    let configuration = oci_configuration(&resolved, &cache, &config)?;
+    let mut configuration = oci_configuration(&resolved, &cache, &config)?;
+    if let Some(host) = &host_nvidia {
+        replace_with_directory(&rootfs.join("opt/extensions").join(&host.name))?;
+        configuration["mounts"]
+            .as_array_mut()
+            .unwrap()
+            .extend(host.prepare(&bundle, false)?.mounts);
+    }
     fs::write(
         bundle.join("config.json"),
         format!("{}\n", serde_json::to_string(&configuration)?),
@@ -478,6 +490,8 @@ mod tests {
             cdi_devices: None,
             extensions: Some(Default::default()),
             host_dynamic: None,
+            host_nvidia_extension: None,
+            host_nvidia_fingerprint: None,
             instance: None,
             mounts: None,
             overlayfs: None,
@@ -489,6 +503,14 @@ mod tests {
         let bytes = serde_json::to_vec(&config).unwrap();
         let expected = linyaps_core::hex_encode(Sha256::digest(bytes));
         assert_eq!(container_id_for(&config).unwrap(), expected);
+        let mut host_config = config.clone();
+        host_config.host_nvidia_extension =
+            Some("org.deepin.driver.display.nvidia.580-95-05".into());
+        host_config.host_nvidia_fingerprint = Some("first-driver-installation".into());
+        let first = container_id_for(&host_config).unwrap();
+        assert_ne!(first, expected);
+        host_config.host_nvidia_fingerprint = Some("same-version-reinstalled".into());
+        assert_ne!(container_id_for(&host_config).unwrap(), first);
     }
 
     #[test]
@@ -543,6 +565,8 @@ mod tests {
             cdi_devices: None,
             extensions: Some(Default::default()),
             host_dynamic: None,
+            host_nvidia_extension: None,
+            host_nvidia_fingerprint: None,
             instance: None,
             mounts: None,
             overlayfs: None,
@@ -614,6 +638,8 @@ mod tests {
             cdi_devices: None,
             extensions: Some(Default::default()),
             host_dynamic: None,
+            host_nvidia_extension: None,
+            host_nvidia_fingerprint: None,
             instance: None,
             mounts: None,
             overlayfs: None,

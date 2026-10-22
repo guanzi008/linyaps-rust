@@ -34,6 +34,50 @@
 
 ## 验证门
 
+### NVIDIA 宿主回退实现分支
+
+源码重新梳理后的职责划分：
+
+- `apps/ll-cli/src/runtime.rs`：解析应用/base/runtime 扩展，已安装扩展优先；缺少 NVIDIA 扩展时选择宿主回退，协调显式/自动 CDI、环境覆盖和最终 OCI 挂载顺序。
+- `crates/linyaps-core/src/host_nvidia.rs`：共用驱动版本检测、受限目录扫描、ELF/SONAME 读取、32/64 位分离、图形 JSON 改写、只读挂载和文件指纹。只读取 ELF 头、程序头、动态段及 SONAME，不整份读取大型驱动库，不执行 `ldd`、`nvidia-ctk` 或原 C++ 程序。
+- `crates/linyaps-api/src/lib.rs`：可选 `hostNvidiaExtension` 与 `hostNvidiaFingerprint` 字段；未启用时不影响旧上下文 JSON。
+- `apps/ll-package-manager/src/run_context.rs`：使用同一发现/挂载实现初始化 ldconfig 缓存；库文件、SONAME、manifest 或同版本驱动替换导致新缓存 ID，过期上下文被拒绝并提示重试。
+- `linyaps-box-rust`：继续使用已有 OCI bind mount/设备挂载机制，本次没有新上游提交，也不需要复制一份 NVIDIA 发现代码进去。
+
+参考的是用户 C++ 分支 [`feat/host-nvidia-fallback-mainline@28384f3e`](https://github.com/guanzi008/linyaps/tree/28384f3e51a7a8b7395a00c6c9854170e4976732) 及 `split/host-nvidia-fallback`，不是将整段 C++ 翻译成 Rust。与参考实现有意不同：只挂载选定的 NVIDIA 文件，不把整个宿主 `/usr`、通用 GLVND、libc 覆盖进容器；拒绝与内核版本不符的核心 NVIDIA 库。独立版本的 EGL 平台库（包括 egl-wayland2）单独识别。JSON 中宿主绝对库路径改写成已验证的 SONAME/文件名，防止沿用容器中不存在的宿主路径。
+
+使用原有应用/base/runtime 的 `org.deepin.driver.display.nvidia` 扩展声明即可自动启用回退。没有此声明的应用，可以在 `~/.config/linglong/apps/<APPID>/config.d/90-host-nvidia.json` 添加以下内容（将两处 `<APPID>` 替换为实际应用 ID）：
+
+```json
+{
+  "ext_defs": {
+    "<APPID>": [{
+      "name": "org.deepin.driver.display.nvidia",
+      "version": "",
+      "directory": "/opt/extensions/nvidia"
+    }]
+  }
+}
+```
+
+不自动卸载已安装的驱动扩展。自动路径的优先级是：已安装扩展优先；缺失时宿主回退；未回退时维持原自动 CDI 选择。用户显式指定的 CDI 始终保留；显式 NVIDIA CDI 禁用自动宿主回退，避免 CDI 使用不同驱动根目录时被宿主扫描错误阻断。对于外部传入且同时包含宿主驱动和 NVIDIA CDI 的上下文，不再追加宿主 Vulkan manifest。运行配置和 `--env` 仍可覆盖自动生成环境。已有 `/dev/nvidia*`、`/dev/dri` 透传机制继续复用，不将此功能当作 GPU/MIG 的设备访问控制边界。
+
+Vulkan 使用 [Khronos 的追加型发现变量](https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderInterfaceArchitecture.md)，保留 Mesa 的默认 ICD，而非强制 `VK_ICD_FILENAMES`；旧版 Vulkan loader 可能不支持这些变量，需要更新容器 runtime。[egl-wayland2](https://github.com/NVIDIA/egl-wayland2) 也要求匹配的宿主驱动和容器 Wayland/GBM 依赖。本实现不会向容器移植宿主 libc，也不启动宿主 Xorg、加载内核固件或自动安装 OpenCL loader。
+
+当前自动化覆盖：无驱动路径、proc/sys 版本解析、Arch/Debian 布局、SONAME、32/64 位隔离、错误版本/架构、越界链接和畸形 ELF/JSON、只读 OCI 顺序、显式 CDI、安装扩展优先、同版本文件替换和配置变更的缓存失效。`tests/system/nvidia-smoke.sh` 对比宿主/容器 GPU UUID 与驱动版本，两次运行检查重复启动，可选检查 OpenGL renderer 和 Vulkan 枚举；它要求实际 NVIDIA 硬件与已安装应用，不会安装驱动或更改系统配置。
+
+本次开发环境没有检测到 NVIDIA 硬件驱动，因此尚不能宣称 WeChat 图形加速、CUDA 内核执行、32 位 GPU 程序和所有发行版驱动组合已完成硬件验证；应在 NVIDIA 机器完成这些测试后再合入发布。
+
+已在本机通过非 GPU 的完整 `ll-cli → package-manager → ll-box → ll-init` 启动回归，另在真实 rootless OCI 容器内验证了模拟 NVIDIA ELF 库的 SONAME 链接、只读目录/文件和 ldconfig 缓存路径。后者默认忽略（依赖配套 `ll-box` 和用户命名空间），x86_64 上可单独执行：
+
+```sh
+LINYAPS_TEST_OCI_RUNTIME="$(realpath ../linyaps-box-rust/target/debug/ll-box)" \
+  cargo test -p linyaps-core host_nvidia::tests::oci_readonly_mounts_and_ldconfig_use_the_same_layout \
+  --locked -- --ignored
+```
+
+### 通用验证
+
 持续集成执行：
 
 ```sh

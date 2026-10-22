@@ -735,6 +735,16 @@ pub struct RunContextConfig {
     pub extensions: Option<BTreeMap<String, Vec<String>>>,
     #[serde(rename = "hostDynamic", skip_serializing_if = "Option::is_none")]
     pub host_dynamic: Option<Vec<Mount>>,
+    #[serde(
+        rename = "hostNvidiaExtension",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub host_nvidia_extension: Option<String>,
+    #[serde(
+        rename = "hostNvidiaFingerprint",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub host_nvidia_fingerprint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instance: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -769,6 +779,18 @@ pub type PackageManager1InstallLayerFDResult = CommonResult;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_context_preserves_optional_host_nvidia_fields() {
+        let legacy = serde_json::json!({"version":"1"});
+        let config: RunContextConfig = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(config.host_nvidia_extension.is_none());
+        assert!(config.host_nvidia_fingerprint.is_none());
+        assert_eq!(serde_json::to_value(config).unwrap(), legacy);
+        let value = serde_json::json!({"version":"1", "hostNvidiaExtension":"org.deepin.driver.display.nvidia.580-95-05", "hostNvidiaFingerprint":"test-digest"});
+        let config: RunContextConfig = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(config).unwrap(), value);
+    }
 
     #[test]
     fn package_info_uses_schema_field_names() {

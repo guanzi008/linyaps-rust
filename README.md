@@ -16,6 +16,19 @@
 
 完整兼容范围、冻结行为和验证清单见 [`COMPATIBILITY.md`](COMPATIBILITY.md)。配套 OCI 运行时位于独立仓库 `linyaps-box-rust`。
 
+## NVIDIA 宿主驱动透传分支
+
+`feat/host-nvidia-passthrough` 在声明的 NVIDIA 扩展没有安装时，将与已加载内核驱动版本一致的宿主 NVIDIA 用户态库以只读方式挂进应用容器；已安装的扩展仍优先。这里是容器共享宿主 GPU，不是虚拟机 PCI/VFIO 直通，也不负责安装或加载内核驱动。
+
+实现包括 SONAME 别名、x86 32/64 位库隔离、EGL/Wayland/GBM/Vulkan 配置、NVML/CUDA 库及 `nvidia-smi`。宿主文件指纹参与启动缓存 ID，避免升级驱动后继续使用旧缓存。显式 NVIDIA `--device` 优先使用 CDI、不再自动注入宿主驱动；宿主回退启用时也不自动叠加 NVIDIA CDI。
+
+详细的源码分工、启用方法、参考分支和验证边界见 [`COMPATIBILITY.md`](COMPATIBILITY.md#nvidia-宿主回退实现分支)。本分支的自动化测试不等于 NVIDIA 硬件实测；发布前需要在有 NVIDIA 的机器上执行：
+
+```sh
+bash tests/system/nvidia-smoke.sh <已安装的应用ID>
+LINYAPS_NVIDIA_GRAPHICS=1 bash tests/system/nvidia-smoke.sh <含glxinfo和vulkaninfo的应用ID>
+```
+
 运行应用要求内核启用非特权用户命名空间。系统仓库层通常由
 `deepin-linglong` 服务账号持有，此时 `ll-cli` 会自动选择
 `fuse-overlayfs` 并将层内属主映射到当前用户；本地用户持有的层可直接使用

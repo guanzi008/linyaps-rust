@@ -249,6 +249,7 @@ fn resolve_requested_context(
         .map_err(|error| error.to_string())?;
     let mut extensions = Vec::new();
     let mut extension_map = BTreeMap::new();
+    let mut host_nvidia_name = None;
     resolve_declared_extensions(
         repository,
         &base,
@@ -256,6 +257,7 @@ fn resolve_requested_context(
         &mut extensions,
         &mut extension_map,
         runtime_config,
+        &mut host_nvidia_name,
     )?;
     if let (Some(reference), Some(runtime_info)) = (&runtime, runtime_info.as_ref()) {
         resolve_declared_extensions(
@@ -265,6 +267,7 @@ fn resolve_requested_context(
             &mut extensions,
             &mut extension_map,
             runtime_config,
+            &mut host_nvidia_name,
         )?;
     }
     resolve_declared_extensions(
@@ -274,6 +277,7 @@ fn resolve_requested_context(
         &mut extensions,
         &mut extension_map,
         runtime_config,
+        &mut host_nvidia_name,
     )?;
     for requested in &options.extensions {
         let reference = resolve_dependency(repository, requested, &info.channel)?;
@@ -296,12 +300,32 @@ fn resolve_requested_context(
             },
         );
     }
+    let host_nvidia = if host_nvidia_name.is_some()
+        && !has_explicit_nvidia_device(options, runtime_config)
+        && !extensions.iter().any(|extension| {
+            linyaps_core::host_nvidia::is_nvidia_extension(&extension.reference.id)
+        }) {
+        linyaps_core::host_nvidia::HostNvidia::discover(app.architecture)
+            .map_err(|error| error.to_string())?
+    } else {
+        None
+    };
+    if let (Some(requested), Some(host)) = (&host_nvidia_name, &host_nvidia)
+        && requested != &host.name
+    {
+        return Err(format!(
+            "requested NVIDIA extension {requested} does not match loaded driver {}",
+            host.name
+        ));
+    }
     let config = RunContextConfig {
         app: Some(app.to_string()),
         base: Some(base.to_string()),
-        cdi_devices: resolve_cdi_devices(options, runtime_config)?,
+        cdi_devices: resolve_cdi_devices(options, runtime_config, host_nvidia.is_some())?,
         extensions: Some(extension_map),
         host_dynamic: None,
+        host_nvidia_extension: host_nvidia.as_ref().map(|host| host.name.clone()),
+        host_nvidia_fingerprint: host_nvidia.as_ref().map(|host| host.fingerprint.clone()),
         instance: options.instance.clone(),
         mounts: resolved_mounts(runtime_config),
         overlayfs: Some(resolve_overlay_mode(repository, &base)?),
@@ -355,6 +379,8 @@ fn resolve_external_context(
         .clone()
         .or_else(|| runtime.clone())
         .unwrap_or_else(|| base.clone());
+    linyaps_core::host_nvidia::HostNvidia::from_config(&config, target.architecture)
+        .map_err(|error| error.to_string())?;
     let info = repository
         .read_layer_info(&target, "binary")
         .map_err(|error| error.to_string())?;
@@ -412,6 +438,7 @@ fn resolve_declared_extensions(
     extensions: &mut Vec<ResolvedExtension>,
     extension_map: &mut BTreeMap<String, Vec<String>>,
     runtime_config: Option<&RuntimeConfigure>,
+    host_nvidia_name: &mut Option<String>,
 ) -> Result<(), String> {
     let mut definitions = info.extensions.clone().unwrap_or_default();
     if let Some(external) = runtime_config.and_then(|config| config.extension_definitions.as_ref())
@@ -436,12 +463,15 @@ fn resolve_declared_extensions(
         };
         let fuzzy = FuzzyReference::new(
             Some(info.channel.clone()),
-            name,
+            name.clone(),
             (!definition.version.is_empty()).then(|| definition.version.clone()),
             Some(target.architecture),
         )
         .map_err(|error| error.to_string())?;
         let Ok(reference) = repository.resolve_local(&fuzzy, true) else {
+            if linyaps_core::host_nvidia::is_nvidia_extension(&name) {
+                *host_nvidia_name = Some(name);
+            }
             continue;
         };
         ensure_extension_kind(repository, &reference)?;
@@ -490,9 +520,7 @@ fn enabled_extension_name(name: &str) -> Option<String> {
     if name != "org.deepin.driver.display.nvidia" {
         return Some(name.to_string());
     }
-    let version = fs::read_to_string("/sys/module/nvidia/version").ok()?;
-    let version = version.trim().replace('.', "-");
-    (!version.is_empty()).then(|| format!("{name}.{version}"))
+    linyaps_core::host_nvidia::extension_name()
 }
 
 fn find_context_target<'a>(
@@ -568,9 +596,23 @@ fn resolve_dependency(
         .map_err(|error| error.to_string())
 }
 
+fn has_explicit_nvidia_device(options: &Run, runtime_config: Option<&RuntimeConfigure>) -> bool {
+    let requested = if options.device.is_empty() {
+        runtime_config
+            .and_then(|config| config.devices.as_deref())
+            .unwrap_or_default()
+    } else {
+        &options.device
+    };
+    requested
+        .iter()
+        .any(|device| device.starts_with("nvidia.com/gpu="))
+}
+
 fn resolve_cdi_devices(
     options: &Run,
     runtime_config: Option<&RuntimeConfigure>,
+    host_nvidia: bool,
 ) -> Result<Option<Vec<linyaps_api::CdiDeviceEntry>>, String> {
     let directories = options
         .cdi_spec_dir
@@ -586,6 +628,9 @@ fn resolve_cdi_devices(
         return cdi::get_devices(&directories, Some(requested))
             .map(Some)
             .map_err(|error| error.to_string());
+    }
+    if host_nvidia {
+        return Ok(None);
     }
     let devices = cdi::get_devices(&directories, None).map_err(|error| error.to_string())?;
     Ok(devices
@@ -847,6 +892,19 @@ fn oci_config(
             }
         }
         append_permission_mounts(&mut mounts, info.permissions.as_ref(), rootfs)?;
+    }
+    if let Some(host) =
+        linyaps_core::host_nvidia::HostNvidia::from_config(run_context, app.architecture)
+            .map_err(|error| error.to_string())?
+    {
+        let expose_vulkan = !run_context
+            .cdi_devices
+            .iter()
+            .flatten()
+            .any(|device| device.kind == "nvidia.com/gpu");
+        host.prepare(bundle, expose_vulkan)
+            .map_err(|error| error.to_string())?
+            .apply(&mut mounts, &mut environment);
     }
     for (key, value) in runtime_config
         .and_then(|config| config.env.as_ref())
@@ -2746,6 +2804,120 @@ mod tests {
     }
 
     #[test]
+    fn host_nvidia_suppresses_only_automatic_cdi_selection() {
+        use clap::Parser;
+        let temporary = tempfile::tempdir().unwrap();
+        fs::write(
+            temporary.path().join("nvidia.json"),
+            json!({
+                "cdiVersion": "0.6.0", "kind": "nvidia.com/gpu",
+                "devices": [{"name":"all", "containerEdits":{}}, {"name":"0", "containerEdits":{}}]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let cli = crate::Cli::try_parse_from(["ll-cli", "run", "org.example.App"]).unwrap();
+        let Some(crate::Command::Run(mut options)) = cli.command else {
+            panic!("expected run")
+        };
+        options.cdi_spec_dir = vec![temporary.path().display().to_string()];
+        assert!(!has_explicit_nvidia_device(&options, None));
+        assert_eq!(
+            resolve_cdi_devices(&options, None, false).unwrap().unwrap()[0].name,
+            "all"
+        );
+        assert!(resolve_cdi_devices(&options, None, true).unwrap().is_none());
+        options.device = vec!["nvidia.com/gpu=0".into()];
+        assert!(has_explicit_nvidia_device(&options, None));
+        assert_eq!(
+            resolve_cdi_devices(&options, None, true).unwrap().unwrap()[0].name,
+            "0"
+        );
+        options.device.clear();
+        let runtime: RuntimeConfigure =
+            serde_json::from_value(json!({"devices": ["nvidia.com/gpu=0"]})).unwrap();
+        assert!(has_explicit_nvidia_device(&options, Some(&runtime)));
+        assert_eq!(
+            resolve_cdi_devices(&options, Some(&runtime), true)
+                .unwrap()
+                .unwrap()[0]
+                .name,
+            "0"
+        );
+        let runtime: RuntimeConfigure = serde_json::from_value(json!({"devices": []})).unwrap();
+        assert!(!has_explicit_nvidia_device(&options, Some(&runtime)));
+        assert!(
+            resolve_cdi_devices(&options, Some(&runtime), true)
+                .unwrap()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn installed_nvidia_extension_remains_preferred_over_host_fallback() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().join("repo");
+        fs::create_dir_all(&root).unwrap();
+        let config = serde_json::from_value(json!({
+            "version":2, "defaultRepo":"stable", "repos":[{"name":"stable", "url":"https://example.invalid", "priority":0}]
+        })).unwrap();
+        let mut repository = LocalRepository::create(&root, config).await.unwrap();
+        let target = "stable:org.example.App/1.0.0.0/x86_64"
+            .parse::<Reference>()
+            .unwrap();
+        let mut info = package_info("app");
+        let nvidia = "org.deepin.driver.display.nvidia.580-95-05";
+        info.extensions = Some(vec![ExtensionDefine {
+            name: nvidia.into(),
+            directory: "/opt/extensions/nvidia".into(),
+            version: "1.0.0".into(),
+            allow_env: None,
+        }]);
+        let mut extensions = Vec::new();
+        let mut extension_map = BTreeMap::new();
+        let mut host_name = None;
+        resolve_declared_extensions(
+            &repository,
+            &target,
+            &info,
+            &mut extensions,
+            &mut extension_map,
+            None,
+            &mut host_name,
+        )
+        .unwrap();
+        assert_eq!(host_name.as_deref(), Some(nvidia));
+        assert!(extensions.is_empty());
+
+        let source = temporary.path().join("extension");
+        fs::create_dir_all(source.join("files")).unwrap();
+        let mut extension_info = package_info("NVIDIA");
+        extension_info.kind = "extension".into();
+        extension_info.id = nvidia.into();
+        fs::write(
+            source.join("info.json"),
+            serde_json::to_vec(&extension_info).unwrap(),
+        )
+        .unwrap();
+        repository.import_layer_dir(&source, &[]).await.unwrap();
+        host_name = None;
+        resolve_declared_extensions(
+            &repository,
+            &target,
+            &info,
+            &mut extensions,
+            &mut extension_map,
+            None,
+            &mut host_name,
+        )
+        .unwrap();
+        assert!(host_name.is_none());
+        assert_eq!(extensions.len(), 1);
+        assert_eq!(extensions[0].reference.id, nvidia);
+    }
+
+    #[test]
     fn context_target_prefers_app_then_runtime_then_base() {
         let app = "stable:org.example.Shared/1.0.0.0/x86_64"
             .parse::<Reference>()
@@ -2833,6 +3005,8 @@ mod tests {
             cdi_devices: None,
             extensions: Some(Default::default()),
             host_dynamic: None,
+            host_nvidia_extension: None,
+            host_nvidia_fingerprint: None,
             instance: Some("test".to_string()),
             mounts: None,
             overlayfs: None,
@@ -2860,6 +3034,8 @@ mod tests {
             cdi_devices: None,
             extensions: None,
             host_dynamic: None,
+            host_nvidia_extension: None,
+            host_nvidia_fingerprint: None,
             instance: None,
             mounts: None,
             overlayfs: None,
