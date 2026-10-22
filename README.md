@@ -92,4 +92,32 @@ dpkg-buildpackage --build=binary --no-sign
 `ll-system-helper install` 生成完整系统布局，不再手工复制部分文件；因此
 会同时安装 X11 会话脚本、systemd 环境生成器、helper 入口和本地化目录。
 
+## Fedora RPM
+
+`packaging/fedora/` 提供 x86_64 的容器构建流程，默认目标为 Fedora 44：
+
+```sh
+bash packaging/fedora/build.sh 44
+```
+
+需要本机 Docker，以及同级目录的 `linyaps-box-rust` 仓库。输出默认位于
+工作区的 `release/fedora44-x86_64/`，包含 `linyaps-rust`、
+`linyaps-rust-builder`、`linyaps-box-rust` 三个 RPM、两个源码 RPM、
+构建清单和 SHA256 校验文件。源码包包含锁定的 Cargo 依赖，RPM 的
+编译与检查阶段均离线执行；准备源码包时需要联网下载依赖。
+
+```sh
+sudo dnf install ./RPMS/*.rpm
+```
+
+这些是第三方、未签名测试包，不是 Fedora 官方仓库包。若本机策略要求
+本地包签名，应先核验校验和并按管理员策略签名，不要全局关闭签名验证。
+RPM 安装会建立系统服务用户和运行目录，使用 Fedora 的 X11 xinit 与
+zsh 补全路径；不会修改 SELinux 策略、关闭 SELinux 或安装 NVIDIA 驱动。
+Docker 安装检查不能替代启用 SELinux 的真实桌面、Wayland 或 GPU 测试。
+`packaging/fedora/smoke-test.sh` 只允许在一次性容器中执行，会测试安装、
+普通用户 D-Bus 访问、重装、卸载及应用数据保留。`rpmlint.toml` 只豁免
+运行时必需的静态 `ll-init` 和原样保留的上游历史许可证地址。
+完整兼容范围与已知限制仍以 `COMPATIBILITY.md` 为准。
+
 许可证为 `LGPL-3.0-or-later`；随仓库保留了对应上游的完整 REUSE 许可证集合。

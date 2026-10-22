@@ -1,0 +1,4 @@
+Filters = [
+    '^linyaps-rust\.x86_64: E: statically-linked-binary /usr/libexec/linglong/ll-init$',
+    '^linyaps-rust\.x86_64: E: incorrect-fsf-address /usr/share/licenses/linyaps-rust/LICENSES/GPL-2\.0-or-later\.txt$',
+]

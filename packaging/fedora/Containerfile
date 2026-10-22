@@ -1,0 +1,9 @@
+ARG FEDORA_RELEASE=44
+FROM fedora:${FEDORA_RELEASE}
+RUN dnf -y install \
+    binutils cargo dbus-daemon desktop-file-utils diffutils findutils \
+    gcc gcc-c++ git glibc-static gzip make pkgconf-pkg-config \
+    redhat-rpm-config rpm-build rpmlint rust systemd systemd-rpm-macros \
+    tar xz && dnf clean all
+ENV CARGO_HOME=/cargo
+ENV CARGO_INCREMENTAL=0
