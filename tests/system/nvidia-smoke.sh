@@ -38,10 +38,14 @@ if [[ ${LINYAPS_NVIDIA_GRAPHICS:-0} == 1 ]]; then
         printf 'OpenGL renderer is not NVIDIA\n' >&2
         exit 1
     fi
-    vulkan_output=$("$ll_cli" run "$app" -- vulkaninfo --summary)
+    vulkan_output=$("$ll_cli" run --env __NV_PRIME_RENDER_OFFLOAD=1 --env __VK_LAYER_NV_optimus=NVIDIA_only "$app" -- vulkaninfo --summary)
     printf '%s\n' "$vulkan_output"
     if ! grep -qi 'driverName.*NVIDIA\|deviceName.*NVIDIA' <<<"$vulkan_output"; then
         printf 'Vulkan did not enumerate an NVIDIA device\n' >&2
+        exit 1
+    fi
+    if ! grep -q '^VK_LAYER_NV_optimus[[:space:]]' <<<"$vulkan_output"; then
+        printf 'Vulkan did not discover the NVIDIA PRIME implicit layer\n' >&2
         exit 1
     fi
 fi

@@ -62,11 +62,11 @@
 
 不自动卸载已安装的驱动扩展。自动路径的优先级是：已安装扩展优先；缺失时宿主回退；未回退时维持原自动 CDI 选择。用户显式指定的 CDI 始终保留；显式 NVIDIA CDI 禁用自动宿主回退，避免 CDI 使用不同驱动根目录时被宿主扫描错误阻断。对于外部传入且同时包含宿主驱动和 NVIDIA CDI 的上下文，不再追加宿主 Vulkan manifest。运行配置和 `--env` 仍可覆盖自动生成环境。已有 `/dev/nvidia*`、`/dev/dri` 透传机制继续复用，不将此功能当作 GPU/MIG 的设备访问控制边界。
 
-Vulkan 使用 [Khronos 的追加型发现变量](https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderInterfaceArchitecture.md)，保留 Mesa 的默认 ICD，而非强制 `VK_ICD_FILENAMES`；旧版 Vulkan loader 可能不支持这些变量，需要更新容器 runtime。[egl-wayland2](https://github.com/NVIDIA/egl-wayland2) 也要求匹配的宿主驱动和容器 Wayland/GBM 依赖。本实现不会向容器移植宿主 libc，也不启动宿主 Xorg、加载内核固件或自动安装 OpenCL loader。
+Vulkan ICD 使用 [Khronos 的追加型发现变量](https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderInterfaceArchitecture.md) `VK_ADD_DRIVER_FILES`，保留 Mesa 的默认 ICD，而非强制 `VK_ICD_FILENAMES`。PRIME 隐式层 JSON 单独只读挂载到 `/etc/vulkan/implicit_layer.d/linyaps-host-*.json`，不覆盖原目录，兼容 Deepin 的 Vulkan loader 1.3.268 不识别 `VK_ADD_IMPLICIT_LAYER_PATH` 的情况；不通过扩大 `XDG_DATA_DIRS` 重复发现同一 NVIDIA ICD。GBM 默认路径同时保留暂存的 NVIDIA 后端和容器的 multiarch、lib64、lib 后端目录，避免混合显卡下找不到 Mesa `dri_gbm.so`；用户显式配置仍优先。更旧的 loader 对追加 ICD 变量的支持仍需单独验证。[egl-wayland2](https://github.com/NVIDIA/egl-wayland2) 也要求匹配的宿主驱动和容器 Wayland/GBM 依赖。本实现不会向容器移植宿主 libc，也不启动宿主 Xorg、加载内核固件或自动安装 OpenCL loader。
 
-当前自动化覆盖：无驱动路径、proc/sys 版本解析、Arch/Debian 布局、SONAME、32/64 位隔离、错误版本/架构、越界链接和畸形 ELF/JSON、只读 OCI 顺序、显式 CDI、安装扩展优先、同版本文件替换和配置变更的缓存失效。`tests/system/nvidia-smoke.sh` 对比宿主/容器 GPU UUID 与驱动版本，两次运行检查重复启动，可选检查 OpenGL renderer 和 Vulkan 枚举；它要求实际 NVIDIA 硬件与已安装应用，不会安装驱动或更改系统配置。
+当前自动化覆盖：无驱动路径、proc/sys 版本解析、Arch/Debian 布局、SONAME、32/64 位隔离、错误版本/架构、越界链接和畸形 ELF/JSON、只读 OCI 顺序、显式 CDI、安装扩展优先、同版本文件替换和配置变更的缓存失效。`tests/system/nvidia-smoke.sh` 对比宿主/容器 GPU UUID 与驱动版本，两次运行检查重复启动，可选检查 OpenGL renderer、Vulkan 枚举和 NVIDIA PRIME 隐式层发现；它要求实际 NVIDIA 硬件与已安装应用，不会安装驱动或更改系统配置。
 
-本次开发环境没有检测到 NVIDIA 硬件驱动，因此尚不能宣称 WeChat 图形加速、CUDA 内核执行、32 位 GPU 程序和所有发行版驱动组合已完成硬件验证；应在 NVIDIA 机器完成这些测试后再合入发布。
+2026-10-22 已补充下述 NVIDIA 真机验证，但仍不能宣称 WeChat 图形加速、32 位 GPU 程序、Wayland、显式 CDI/MIG、多 NVIDIA GPU 隔离和所有发行版驱动组合已经完成硬件验证。
 
 已在本机通过非 GPU 的完整 `ll-cli → package-manager → ll-box → ll-init` 启动回归，另在真实 rootless OCI 容器内验证了模拟 NVIDIA ELF 库的 SONAME 链接、只读目录/文件和 ldconfig 缓存路径。后者默认忽略（依赖配套 `ll-box` 和用户命名空间），x86_64 上可单独执行：
 
@@ -75,6 +75,29 @@ LINYAPS_TEST_OCI_RUNTIME="$(realpath ../linyaps-box-rust/target/debug/ll-box)" \
   cargo test -p linyaps-core host_nvidia::tests::oci_readonly_mounts_and_ldconfig_use_the_same_layout \
   --locked -- --ignored
 ```
+
+#### 2026-10-22 NVIDIA 真机验证
+
+环境：Deepin 23.1、X11、Intel Iris Xe + NVIDIA GeForce RTX 3070 Ti Laptop GPU（8 GiB）、NVIDIA 570.124.04。使用本分支 Rust 调试构建与配套 Rust ll-box；复制现有应用/base 到内存盘隔离仓库，未替换系统安装的玲珑程序，也没有安装或生成驱动扩展/CDI 文件。宿主已有 CDI 文件，但测试上下文选择的是内置宿主驱动回退路径。
+
+| 项目 | 实测结果 |
+| --- | --- |
+| NVML / nvidia-smi | 容器与宿主的 GPU UUID、驱动版本一致 |
+| OpenGL 默认 / PRIME | 默认 Intel；显式 `--env __NV_PRIME_RENDER_OFFLOAD=1 --env __GLX_VENDOR_LIBRARY_NAME=nvidia` 后使用 NVIDIA，宿主同名白名单变量也能继承 |
+| Vulkan PRIME | 修复前能枚举 NVIDIA，却发现不了 `VK_LAYER_NV_optimus`；修复后隐式层可用，NVIDIA 排在 GPU 0，未重复枚举 NVIDIA ICD |
+| CUDA Driver API | 宿主与容器均完成 PTX JIT、分配显存、启动一个 GPU 内核并读回结果 `42`；显式 `--env CUDA_VISIBLE_DEVICES=-1` 后返回无 CUDA 设备 |
+| FurMark OpenGL | `com.geeks3d.furmark` 包 2.6.0.1 / 程序 2.6.0.0；模拟鼠标点击 RUN，1280×720、约 9.7 秒，1384 帧，min/avg/max = 139/143/145 FPS，最高 57°C、GPU 占用 100% |
+| FurMark Vulkan | 同一 GUI 用下拉菜单切换 FurMark (VK) 并点击 RUN，1280×720、约 8.8 秒，1425 帧，min/avg/max = 159/161/164 FPS，最高 54°C、GPU 占用 100% |
+
+FurMark 的两个渲染测试均有实际画面、窗口标题、应用统计日志和 `nvidia-smi` 采样，并在短时测试后通过 Escape 退出。以上是启动/渲染功能冒烟数据，不是长时稳定性结论，也不是 C++/Rust 性能对照。
+
+实测边界与未解决问题：
+
+- FurMark 默认勾选 Display OSI 时触发 `ImGui::ItemAdd` 空 ID 断言；直接在宿主运行同一包内二进制也以 134 退出。上述 GL/VK 通过结果是在 GUI 取消 Display OSI 后取得，不表示默认 OSI 问题已修好。
+- `eglinfo` 的全部平台枚举在宿主和容器均出现 139；不能将其当作 EGL/Wayland 全链路通过。GBM 搜索路径覆盖 Mesa 的问题已修复，但不据此宣称解决这个宿主同样出现的崩溃。
+- `CUDA_VISIBLE_DEVICES` 不在自动继承白名单，宿主设置后直接运行 `ll-cli` 不会传入，必须用 `--env` 或应用运行配置。`NVIDIA_VISIBLE_DEVICES=none` 即使显式传入也不屏蔽设备节点/NVML；本实现没有按 NVIDIA Container Toolkit 语义解析它。
+- 活跃容器复用存在环境覆盖缺口：同一 `--instance` 第一次以 `--env PROBE_VALUE=first` 保持运行，第二次指定 `second` 实际仍读到 `first`；新实例能读到 `second`。本次未修改复用协议，验证不同变量时使用独立实例或先退出旧容器。
+- 本次不修改磁盘已满机器的原安装仓库。原 `states.json` 含两条不存在的 arm64 层记录，已仅在隔离测试快照中过滤；未做系统修复或清理用户文件。
 
 ### 通用验证
 

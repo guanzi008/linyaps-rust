@@ -30,6 +30,7 @@ struct Library {
 pub struct HostNvidia {
     pub name: String,
     pub fingerprint: String,
+    architecture: Architecture,
     libraries: BTreeMap<PathBuf, Library>,
     manifests: BTreeMap<PathBuf, Value>,
     auxiliary: BTreeMap<PathBuf, PathBuf>,
@@ -116,6 +117,7 @@ impl HostNvidia {
         let mut host = Self {
             name: format!("{EXTENSION_ID}.{}", version.replace('.', "-")),
             fingerprint: String::new(),
+            architecture,
             libraries: BTreeMap::new(),
             manifests: BTreeMap::new(),
             auxiliary: BTreeMap::new(),
@@ -385,7 +387,12 @@ impl HostNvidia {
         {
             environment.insert(
                 "GBM_BACKENDS_PATH".into(),
-                prefix.join("orig").display().to_string(),
+                format!(
+                    "{}/orig:{}/orig/32:/usr/lib/{}/gbm:/usr/lib64/gbm:/usr/lib/gbm:/lib64/gbm:/lib/gbm",
+                    prefix.display(),
+                    prefix.display(),
+                    self.architecture.triplet()
+                ),
             );
         }
         if self.auxiliary.keys().any(|path| path.starts_with("bin")) {
@@ -399,7 +406,7 @@ impl HostNvidia {
             }
             let target = root.join(relative);
             fs::create_dir_all(target.parent().unwrap())?;
-            fs::write(target, manifest.to_string())?;
+            fs::write(&target, manifest.to_string())?;
             let container_directory = prefix.join(directory).display().to_string();
             match category {
                 "egl_vendor.d" => merge_path(
@@ -428,11 +435,13 @@ impl HostNvidia {
                     "VK_ADD_DRIVER_FILES",
                     &prefix.join(relative).display().to_string(),
                 ),
-                "implicit_layer.d" => merge_path(
-                    &mut environment,
-                    "VK_ADD_IMPLICIT_LAYER_PATH",
-                    &container_directory,
-                ),
+                "implicit_layer.d" => mounts.push(readonly_bind(
+                    &target,
+                    &Path::new("/etc/vulkan/implicit_layer.d").join(format!(
+                        "linyaps-host-{}",
+                        relative.file_name().unwrap().to_string_lossy()
+                    )),
+                )),
                 _ => {}
             }
         }
@@ -953,6 +962,11 @@ mod tests {
             "usr/share/glvnd/egl_vendor.d/10_nvidia.json",
             json!({"ICD":{"library_path":"/usr/lib/libEGL_nvidia.so.0"}}).to_string(),
         );
+        write(
+            root.path(),
+            "usr/share/vulkan/implicit_layer.d/nvidia_layers.json",
+            json!({"layers":[{"name":"VK_LAYER_NV_optimus", "library_path":"/usr/lib/libGLX_nvidia.so.0"}]}).to_string(),
+        );
         write(root.path(), "usr/share/vulkan/icd.d/nvidia_bad.json", "{");
         write(
             root.path(),
@@ -960,7 +974,7 @@ mod tests {
             json!({"ICD":{"library_path":"/evil/libmissing.so"}}).to_string(),
         );
         let host = discover(root.path());
-        assert_eq!(host.manifests.len(), 2);
+        assert_eq!(host.manifests.len(), 3);
         assert_eq!(
             host.manifests[Path::new("share/vulkan/icd.d/nvidia_icd.json")]["ICD"]["library_path"],
             "libGLX_nvidia.so.0"
@@ -976,6 +990,22 @@ mod tests {
         assert!(environment["LD_LIBRARY_PATH"].ends_with(":/app/lib"));
         assert!(environment["VK_ADD_DRIVER_FILES"].ends_with(":/existing/icd.json"));
         assert!(!environment.contains_key("VK_ICD_FILENAMES"));
+        assert!(!environment.contains_key("VK_ADD_IMPLICIT_LAYER_PATH"));
+        assert!(!environment.contains_key("XDG_DATA_DIRS"));
+        let implicit_layer = mounts
+            .iter()
+            .find(|mount| {
+                mount["destination"]
+                    == "/etc/vulkan/implicit_layer.d/linyaps-host-nvidia_layers.json"
+            })
+            .unwrap();
+        let implicit_manifest: Value =
+            serde_json::from_slice(&fs::read(implicit_layer["source"].as_str().unwrap()).unwrap())
+                .unwrap();
+        assert_eq!(
+            implicit_manifest["layers"][0]["library_path"],
+            "libGLX_nvidia.so.0"
+        );
         assert!(environment["__EGL_VENDOR_LIBRARY_DIRS"].contains("/usr/share/glvnd/egl_vendor.d"));
         assert!(
             mounts
@@ -1000,11 +1030,12 @@ mod tests {
             .prepare(&root.path().join("cdi-bundle"), false)
             .unwrap();
         assert!(!explicit_cdi.environment.contains_key("VK_ADD_DRIVER_FILES"));
-        assert!(
-            !explicit_cdi
-                .environment
-                .contains_key("VK_ADD_IMPLICIT_LAYER_PATH")
-        );
+        assert!(!explicit_cdi.mounts.iter().any(|mount| {
+            mount["destination"]
+                .as_str()
+                .unwrap()
+                .starts_with("/etc/vulkan/")
+        }));
     }
 
     #[test]
@@ -1094,7 +1125,13 @@ mod tests {
         let host = discover(root.path());
         assert_eq!(host.libraries.len(), 3);
         let prepared = host.prepare(&root.path().join("bundle"), true).unwrap();
-        assert!(prepared.environment["GBM_BACKENDS_PATH"].ends_with("/orig"));
+        let gbm_paths = prepared.environment["GBM_BACKENDS_PATH"]
+            .split(':')
+            .collect::<Vec<_>>();
+        assert_eq!(gbm_paths[0], format!("/opt/extensions/{}/orig", host.name));
+        assert!(gbm_paths.contains(&"/usr/lib/x86_64-linux-gnu/gbm"));
+        assert!(gbm_paths.contains(&"/usr/lib64/gbm"));
+        assert!(gbm_paths.contains(&"/usr/lib/gbm"));
         let mut environment = BTreeMap::from([("GBM_BACKENDS_PATH".into(), "/custom/gbm".into())]);
         prepared.apply(&mut Vec::new(), &mut environment);
         assert_eq!(environment["GBM_BACKENDS_PATH"], "/custom/gbm");
